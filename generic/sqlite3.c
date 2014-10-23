@@ -76579,7 +76579,7 @@ static int vdbeSorterMapFile(SortSubtask *pTask, SorterFile *pFile, u8 **pp){
   int rc = SQLITE_OK;
   if( pFile->iEof<=(i64)(pTask->pSorter->db->nMaxSorterMmap) ){
     sqlite3_file *pFd = pFile->pFd;
-    if( pFd->pMethods->iVersion>=3 ){
+    if( pFd->pMethods->iVersion>=3 && fd->pMethods->xFetch ){
       rc = sqlite3OsFetch(pFd, 0, (int)pFile->iEof, (void**)pp);
       testcase( rc!=SQLITE_OK );
     }
