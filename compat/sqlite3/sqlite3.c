@@ -1686,11 +1686,11 @@ SQLITE_API int SQLITE_CDECL sqlite3_db_config(sqlite3*, int op, ...);
 */
 typedef struct sqlite3_mem_methods sqlite3_mem_methods;
 struct sqlite3_mem_methods {
-  void *(*xMalloc)(int);         /* Memory allocation function */
+  void *(*xMalloc)(size_t);      /* Memory allocation function */
   void (*xFree)(void*);          /* Free a prior allocation */
-  void *(*xRealloc)(void*,int);  /* Resize an allocation */
-  int (*xSize)(void*);           /* Return the size of an allocation */
-  int (*xRoundup)(int);          /* Round up request size to allocation size */
+  void *(*xRealloc)(void*,size_t);/* Resize an allocation */
+  size_t (*xSize)(void*);        /* Return the size of an allocation */
+  size_t (*xRoundup)(size_t);    /* Round up request size to allocation size */
   int (*xInit)(void*);           /* Initialize the memory allocator */
   void (*xShutdown)(void*);      /* Deinitialize the memory allocator */
   void *pAppData;                /* Argument to xInit() and xShutdown() */
@@ -9202,7 +9202,8 @@ SQLITE_PRIVATE const int sqlite3one;
 #endif
 #ifndef SQLITE_MAX_MMAP_SIZE
 # if defined(__linux__) \
-  || defined(_WIN32) || defined(__CYGWIN__) \
+  || defined(_WIN32) \
+  || defined(__CYGWIN__) \
   || (defined(__APPLE__) && defined(__MACH__)) \
   || defined(__sun) \
   || defined(__FreeBSD__) \
@@ -13073,21 +13074,21 @@ SQLITE_PRIVATE int sqlite3Strlen30(const char*);
 
 SQLITE_PRIVATE int sqlite3MallocInit(void);
 SQLITE_PRIVATE void sqlite3MallocEnd(void);
-SQLITE_PRIVATE void *sqlite3Malloc(u64);
-SQLITE_PRIVATE void *sqlite3MallocZero(u64);
-SQLITE_PRIVATE void *sqlite3DbMallocZero(sqlite3*, u64);
-SQLITE_PRIVATE void *sqlite3DbMallocRaw(sqlite3*, u64);
+SQLITE_PRIVATE void *sqlite3Malloc(size_t);
+SQLITE_PRIVATE void *sqlite3MallocZero(size_t);
+SQLITE_PRIVATE void *sqlite3DbMallocZero(sqlite3*, size_t);
+SQLITE_PRIVATE void *sqlite3DbMallocRaw(sqlite3*, size_t);
 SQLITE_PRIVATE char *sqlite3DbStrDup(sqlite3*,const char*);
-SQLITE_PRIVATE char *sqlite3DbStrNDup(sqlite3*,const char*, u64);
-SQLITE_PRIVATE void *sqlite3Realloc(void*, u64);
-SQLITE_PRIVATE void *sqlite3DbReallocOrFree(sqlite3 *, void *, u64);
-SQLITE_PRIVATE void *sqlite3DbRealloc(sqlite3 *, void *, u64);
+SQLITE_PRIVATE char *sqlite3DbStrNDup(sqlite3*,const char*, size_t);
+SQLITE_PRIVATE void *sqlite3Realloc(void*, size_t);
+SQLITE_PRIVATE void *sqlite3DbReallocOrFree(sqlite3 *, void *, size_t);
+SQLITE_PRIVATE void *sqlite3DbRealloc(sqlite3 *, void *, size_t);
 SQLITE_PRIVATE void sqlite3DbFree(sqlite3*, void*);
 SQLITE_PRIVATE int sqlite3MallocSize(void*);
 SQLITE_PRIVATE int sqlite3DbMallocSize(sqlite3*, void*);
-SQLITE_PRIVATE void *sqlite3ScratchMalloc(int);
+SQLITE_PRIVATE void *sqlite3ScratchMalloc(size_t);
 SQLITE_PRIVATE void sqlite3ScratchFree(void*);
-SQLITE_PRIVATE void *sqlite3PageMalloc(int);
+SQLITE_PRIVATE void *sqlite3PageMalloc(size_t);
 SQLITE_PRIVATE void sqlite3PageFree(void*);
 SQLITE_PRIVATE void sqlite3MemSetDefault(void);
 #ifndef SQLITE_OMIT_BUILTIN_TEST
@@ -13132,7 +13133,7 @@ SQLITE_PRIVATE   int sqlite3MutexEnd(void);
 SQLITE_PRIVATE sqlite3_int64 sqlite3StatusValue(int);
 SQLITE_PRIVATE void sqlite3StatusUp(int, int);
 SQLITE_PRIVATE void sqlite3StatusDown(int, int);
-SQLITE_PRIVATE void sqlite3StatusSet(int, int);
+SQLITE_PRIVATE void sqlite3StatusSet(int, size_t);
 
 /* Access to mutexes used by sqlite3_status() */
 SQLITE_PRIVATE sqlite3_mutex *sqlite3Pcache1Mutex(void);
@@ -13627,7 +13628,7 @@ SQLITE_PRIVATE int sqlite3Stat4Column(sqlite3*, const void*, int, int, sqlite3_v
 /*
 ** The interface to the LEMON-generated parser
 */
-SQLITE_PRIVATE void *sqlite3ParserAlloc(void*(*)(u64));
+SQLITE_PRIVATE void *sqlite3ParserAlloc(void*(*)(size_t));
 SQLITE_PRIVATE void sqlite3ParserFree(void*, void(*)(void*));
 SQLITE_PRIVATE void sqlite3Parser(void*, int, Token, Parse*);
 #ifdef YYTRACKMAXSTACKDEPTH
@@ -15208,7 +15209,7 @@ SQLITE_PRIVATE void sqlite3StatusDown(int op, int N){
 ** Set the value of a status to X.  The highwater mark is adjusted if
 ** necessary.  The caller must hold the appropriate mutex.
 */
-SQLITE_PRIVATE void sqlite3StatusSet(int op, int X){
+SQLITE_PRIVATE void sqlite3StatusSet(int op, size_t X){
   wsdStatInit;
   assert( op>=0 && op<ArraySize(wsdStat.nowValue) );
   assert( op>=0 && op<ArraySize(statMutex) );
@@ -17097,11 +17098,11 @@ SQLITE_PRIVATE void sqlite3EndBenignMalloc(void){
 /*
 ** No-op versions of all memory allocation routines
 */
-static void *sqlite3MemMalloc(int nByte){ return 0; }
+static void *sqlite3MemMalloc(size_t nByte){ return 0; }
 static void sqlite3MemFree(void *pPrior){ return; }
-static void *sqlite3MemRealloc(void *pPrior, int nByte){ return 0; }
-static int sqlite3MemSize(void *pPrior){ return 0; }
-static int sqlite3MemRoundup(int n){ return n; }
+static void *sqlite3MemRealloc(void *pPrior, size_t nByte){ return 0; }
+static size_t sqlite3MemSize(void *pPrior){ return 0; }
+static size_t sqlite3MemRoundup(size_t n){ return n; }
 static int sqlite3MemInit(void *NotUsed){ return SQLITE_OK; }
 static void sqlite3MemShutdown(void *NotUsed){ return; }
 
@@ -17254,12 +17255,12 @@ static malloc_zone_t* _sqliteZone_;
 ** cases of nByte<=0 will be intercepted and dealt with by higher level
 ** routines.
 */
-static void *sqlite3MemMalloc(int nByte){
+static void *sqlite3MemMalloc(size_t nByte){
 #ifdef SQLITE_MALLOCSIZE
   void *p = SQLITE_MALLOC( nByte );
   if( p==0 ){
     testcase( sqlite3GlobalConfig.xLog!=0 );
-    sqlite3_log(SQLITE_NOMEM, "failed to allocate %u bytes of memory", nByte);
+    sqlite3_log(SQLITE_NOMEM, "failed to allocate %llu bytes of memory", (u64)nByte);
   }
   return p;
 #else
@@ -17272,7 +17273,7 @@ static void *sqlite3MemMalloc(int nByte){
     p++;
   }else{
     testcase( sqlite3GlobalConfig.xLog!=0 );
-    sqlite3_log(SQLITE_NOMEM, "failed to allocate %u bytes of memory", nByte);
+    sqlite3_log(SQLITE_NOMEM, "failed to allocate %llu bytes of memory", (u64)nByte);
   }
   return (void *)p;
 #endif
@@ -17301,15 +17302,15 @@ static void sqlite3MemFree(void *pPrior){
 ** Report the allocated size of a prior return from xMalloc()
 ** or xRealloc().
 */
-static int sqlite3MemSize(void *pPrior){
+static size_t sqlite3MemSize(void *pPrior){
 #ifdef SQLITE_MALLOCSIZE
-  return pPrior ? (int)SQLITE_MALLOCSIZE(pPrior) : 0;
+  return pPrior ? SQLITE_MALLOCSIZE(pPrior) : 0;
 #else
   sqlite3_int64 *p;
   if( pPrior==0 ) return 0;
   p = (sqlite3_int64*)pPrior;
   p--;
-  return (int)p[0];
+  return (size_t)p[0];
 #endif
 }
 
@@ -17323,14 +17324,14 @@ static int sqlite3MemSize(void *pPrior){
 ** cases where nByte<=0 will have been intercepted by higher-level
 ** routines and redirected to xFree.
 */
-static void *sqlite3MemRealloc(void *pPrior, int nByte){
+static void *sqlite3MemRealloc(void *pPrior, size_t nByte){
 #ifdef SQLITE_MALLOCSIZE
   void *p = SQLITE_REALLOC(pPrior, nByte);
   if( p==0 ){
     testcase( sqlite3GlobalConfig.xLog!=0 );
     sqlite3_log(SQLITE_NOMEM,
-      "failed memory resize %u to %u bytes",
-      SQLITE_MALLOCSIZE(pPrior), nByte);
+      "failed memory resize %llu to %llu bytes",
+      (u64)SQLITE_MALLOCSIZE(pPrior), (u64)nByte);
   }
   return p;
 #else
@@ -17345,8 +17346,8 @@ static void *sqlite3MemRealloc(void *pPrior, int nByte){
   }else{
     testcase( sqlite3GlobalConfig.xLog!=0 );
     sqlite3_log(SQLITE_NOMEM,
-      "failed memory resize %u to %u bytes",
-      sqlite3MemSize(pPrior), nByte);
+      "failed memory resize %llu to %llu bytes",
+      (u64)sqlite3MemSize(pPrior), (u64)nByte);
   }
   return (void*)p;
 #endif
@@ -17355,7 +17356,7 @@ static void *sqlite3MemRealloc(void *pPrior, int nByte){
 /*
 ** Round up a request size to the next valid allocation size.
 */
-static int sqlite3MemRoundup(int n){
+static size_t sqlite3MemRoundup(size_t n){
   return ROUND8(n);
 }
 
@@ -17482,7 +17483,7 @@ SQLITE_PRIVATE void sqlite3MemSetDefault(void){
 ** MemBlockHdr.
 */
 struct MemBlockHdr {
-  i64 iSize;                          /* Size of this allocation */
+  size_t iSize;                       /* Size of this allocation */
   struct MemBlockHdr *pNext, *pPrev;  /* Linked list of all unfreed memory */
   char nBacktrace;                    /* Number of backtraces on this alloc */
   char nBacktraceSlots;               /* Available backtrace slots */
@@ -17525,7 +17526,7 @@ static struct {
   ** The number of levels of backtrace to save in new allocations.
   */
   int nBacktrace;
-  void (*xBacktrace)(int, int, void **);
+  void (*xBacktrace)(size_t, int, void **);
 
   /*
   ** Title text to insert in front of each block
@@ -17555,8 +17556,8 @@ static struct {
 /*
 ** Adjust memory usage statistics
 */
-static void adjustStats(int iSize, int increment){
-  int i = ROUND8(iSize)/8;
+static void adjustStats(size_t iSize, int increment){
+  size_t i = ROUND8(iSize)/8;
   if( i>NCSIZE-1 ){
     i = NCSIZE - 1;
   }
@@ -17582,7 +17583,7 @@ static struct MemBlockHdr *sqlite3MemsysGetHeader(void *pAllocation){
   struct MemBlockHdr *p;
   int *pInt;
   u8 *pU8;
-  int nReserve;
+  size_t nReserve;
 
   p = (struct MemBlockHdr*)pAllocation;
   p--;
@@ -17602,13 +17603,13 @@ static struct MemBlockHdr *sqlite3MemsysGetHeader(void *pAllocation){
 /*
 ** Return the number of bytes currently allocated at address p.
 */
-static int sqlite3MemSize(void *p){
+static size_t sqlite3MemSize(void *p){
   struct MemBlockHdr *pHdr;
   if( !p ){
     return 0;
   }
   pHdr = sqlite3MemsysGetHeader(p);
-  return (int)pHdr->iSize;
+  return pHdr->iSize;
 }
 
 /*
@@ -17636,7 +17637,7 @@ static void sqlite3MemShutdown(void *NotUsed){
 /*
 ** Round up a request size to the next valid allocation size.
 */
-static int sqlite3MemRoundup(int n){
+static size_t sqlite3MemRoundup(size_t n){
   return ROUND8(n);
 }
 
@@ -17668,14 +17669,14 @@ static void randomFill(char *pBuf, int nByte){
 /*
 ** Allocate nByte bytes of memory.
 */
-static void *sqlite3MemMalloc(int nByte){
+static void *sqlite3MemMalloc(size_t nByte){
   struct MemBlockHdr *pHdr;
   void **pBt;
   char *z;
   int *pInt;
   void *p = 0;
-  int totalSize;
-  int nReserve;
+  size_t totalSize;
+  size_t nReserve;
   sqlite3_mutex_enter(mem.mutex);
   assert( mem.disallow==0 );
   nReserve = ROUND8(nByte);
@@ -17753,9 +17754,9 @@ static void sqlite3MemFree(void *pPrior){
   }
   z = (char*)pBt;
   z -= pHdr->nTitle;
-  adjustStats((int)pHdr->iSize, -1);
+  adjustStats(pHdr->iSize, -1);
   randomFill(z, sizeof(void*)*pHdr->nBacktraceSlots + sizeof(*pHdr) +
-                (int)pHdr->iSize + sizeof(int) + pHdr->nTitle);
+                pHdr->iSize + sizeof(int) + pHdr->nTitle);
   free(z);
   sqlite3_mutex_leave(mem.mutex);  
 }
@@ -17769,7 +17770,7 @@ static void sqlite3MemFree(void *pPrior){
 ** much more likely to break and we are much more liking to find
 ** the error.
 */
-static void *sqlite3MemRealloc(void *pPrior, int nByte){
+static void *sqlite3MemRealloc(void *pPrior, size_t nByte){
   struct MemBlockHdr *pOldHdr;
   void *pNew;
   assert( mem.disallow==0 );
@@ -17777,9 +17778,9 @@ static void *sqlite3MemRealloc(void *pPrior, int nByte){
   pOldHdr = sqlite3MemsysGetHeader(pPrior);
   pNew = sqlite3MemMalloc(nByte);
   if( pNew ){
-    memcpy(pNew, pPrior, (int)(nByte<pOldHdr->iSize ? nByte : pOldHdr->iSize));
+    memcpy(pNew, pPrior, (size_t)(nByte<pOldHdr->iSize ? nByte : pOldHdr->iSize));
     if( nByte>pOldHdr->iSize ){
-      randomFill(&((char*)pNew)[pOldHdr->iSize], nByte - (int)pOldHdr->iSize);
+      randomFill(&((char*)pNew)[pOldHdr->iSize], nByte - (size_t)pOldHdr->iSize);
     }
     sqlite3MemFree(pPrior);
   }
@@ -17872,7 +17873,7 @@ SQLITE_PRIVATE void sqlite3MemdebugBacktrace(int depth){
   mem.nBacktrace = depth;
 }
 
-SQLITE_PRIVATE void sqlite3MemdebugBacktraceCallback(void (*xBacktrace)(int, int, void **)){
+SQLITE_PRIVATE void sqlite3MemdebugBacktraceCallback(void (*xBacktrace)(size_t, int, void **)){
   mem.xBacktrace = xBacktrace;
 }
 
@@ -17894,7 +17895,7 @@ SQLITE_PRIVATE void sqlite3MemdebugSync(){
   for(pHdr=mem.pFirst; pHdr; pHdr=pHdr->pNext){
     void **pBt = (void**)pHdr;
     pBt -= pHdr->nBacktraceSlots;
-    mem.xBacktrace((int)pHdr->iSize, pHdr->nBacktrace-1, &pBt[1]);
+    mem.xBacktrace(pHdr->iSize, pHdr->nBacktrace-1, &pBt[1]);
   }
 }
 
@@ -20923,8 +20924,8 @@ static void sqlite3MallocAlarm(int nByte){
 ** Do a memory allocation with statistics and alarms.  Assume the
 ** lock is already held.
 */
-static int mallocWithAlarm(int n, void **pp){
-  int nFull;
+static int mallocWithAlarm(size_t n, void **pp){
+  size_t nFull;
   void *p;
   assert( sqlite3_mutex_held(mem0.mutex) );
   nFull = sqlite3GlobalConfig.m.xRoundup(n);
@@ -20958,9 +20959,9 @@ static int mallocWithAlarm(int n, void **pp){
 ** Allocate memory.  This routine is like sqlite3_malloc() except that it
 ** assumes the memory subsystem has already been initialized.
 */
-SQLITE_PRIVATE void *sqlite3Malloc(u64 n){
+SQLITE_PRIVATE void *sqlite3Malloc(size_t n){
   void *p;
-  if( n==0 || n>=0x7fffff00 ){
+  if( n==0 ){
     /* A memory allocation of a number of bytes which is near the maximum
     ** signed integer value might cause an integer overflow inside of the
     ** xMalloc().  Hence we limit the maximum size to 0x7fffff00, giving
@@ -20972,7 +20973,7 @@ SQLITE_PRIVATE void *sqlite3Malloc(u64 n){
     mallocWithAlarm((int)n, &p);
     sqlite3_mutex_leave(mem0.mutex);
   }else{
-    p = sqlite3GlobalConfig.m.xMalloc((int)n);
+    p = sqlite3GlobalConfig.m.xMalloc(n);
   }
   assert( EIGHT_BYTE_ALIGNMENT(p) );  /* IMP: R-11148-40995 */
   return p;
@@ -21015,7 +21016,7 @@ static int scratchAllocOut = 0;
 ** structures that would not normally fit on the stack of an
 ** embedded processor.
 */
-SQLITE_PRIVATE void *sqlite3ScratchMalloc(int n){
+SQLITE_PRIVATE void *sqlite3ScratchMalloc(size_t n){
   void *p;
   assert( n>0 );
 
@@ -21196,7 +21197,7 @@ SQLITE_PRIVATE void sqlite3DbFree(sqlite3 *db, void *p){
 /*
 ** Change the size of an existing memory allocation
 */
-SQLITE_PRIVATE void *sqlite3Realloc(void *pOld, u64 nBytes){
+SQLITE_PRIVATE void *sqlite3Realloc(void *pOld, size_t nBytes){
   int nOld, nNew, nDiff;
   void *pNew;
   assert( sqlite3MemdebugHasType(pOld, MEMTYPE_HEAP) );
@@ -21221,7 +21222,7 @@ SQLITE_PRIVATE void *sqlite3Realloc(void *pOld, u64 nBytes){
     pNew = pOld;
   }else if( sqlite3GlobalConfig.bMemstat ){
     sqlite3_mutex_enter(mem0.mutex);
-    sqlite3StatusSet(SQLITE_STATUS_MALLOC_SIZE, (int)nBytes);
+    sqlite3StatusSet(SQLITE_STATUS_MALLOC_SIZE, nBytes);
     nDiff = nNew - nOld;
     if( sqlite3StatusValue(SQLITE_STATUS_MEMORY_USED) >= 
           mem0.alarmThreshold-nDiff ){
@@ -21266,7 +21267,7 @@ SQLITE_API void *SQLITE_STDCALL sqlite3_realloc64(void *pOld, sqlite3_uint64 n){
 /*
 ** Allocate and zero memory.
 */ 
-SQLITE_PRIVATE void *sqlite3MallocZero(u64 n){
+SQLITE_PRIVATE void *sqlite3MallocZero(size_t n){
   void *p = sqlite3Malloc(n);
   if( p ){
     memset(p, 0, (size_t)n);
@@ -21278,7 +21279,7 @@ SQLITE_PRIVATE void *sqlite3MallocZero(u64 n){
 ** Allocate and zero memory.  If the allocation fails, make
 ** the mallocFailed flag in the connection pointer.
 */
-SQLITE_PRIVATE void *sqlite3DbMallocZero(sqlite3 *db, u64 n){
+SQLITE_PRIVATE void *sqlite3DbMallocZero(sqlite3 *db, size_t n){
   void *p = sqlite3DbMallocRaw(db, n);
   if( p ){
     memset(p, 0, (size_t)n);
@@ -21304,7 +21305,7 @@ SQLITE_PRIVATE void *sqlite3DbMallocZero(sqlite3 *db, u64 n){
 ** In other words, if a subsequent malloc (ex: "b") worked, it is assumed
 ** that all prior mallocs (ex: "a") worked too.
 */
-SQLITE_PRIVATE void *sqlite3DbMallocRaw(sqlite3 *db, u64 n){
+SQLITE_PRIVATE void *sqlite3DbMallocRaw(sqlite3 *db, size_t n){
   void *p;
   assert( db==0 || sqlite3_mutex_held(db->mutex) );
   assert( db==0 || db->pnBytesFreed==0 );
@@ -21348,7 +21349,7 @@ SQLITE_PRIVATE void *sqlite3DbMallocRaw(sqlite3 *db, u64 n){
 ** Resize the block of memory pointed to by p to n bytes. If the
 ** resize fails, set the mallocFailed flag in the connection object.
 */
-SQLITE_PRIVATE void *sqlite3DbRealloc(sqlite3 *db, void *p, u64 n){
+SQLITE_PRIVATE void *sqlite3DbRealloc(sqlite3 *db, void *p, size_t n){
   void *pNew = 0;
   assert( db!=0 );
   assert( sqlite3_mutex_held(db->mutex) );
@@ -21384,7 +21385,7 @@ SQLITE_PRIVATE void *sqlite3DbRealloc(sqlite3 *db, void *p, u64 n){
 ** Attempt to reallocate p.  If the reallocation fails, then free p
 ** and set the mallocFailed flag in the database connection.
 */
-SQLITE_PRIVATE void *sqlite3DbReallocOrFree(sqlite3 *db, void *p, u64 n){
+SQLITE_PRIVATE void *sqlite3DbReallocOrFree(sqlite3 *db, void *p, size_t n){
   void *pNew;
   pNew = sqlite3DbRealloc(db, p, n);
   if( !pNew ){
@@ -21414,12 +21415,11 @@ SQLITE_PRIVATE char *sqlite3DbStrDup(sqlite3 *db, const char *z){
   }
   return zNew;
 }
-SQLITE_PRIVATE char *sqlite3DbStrNDup(sqlite3 *db, const char *z, u64 n){
+SQLITE_PRIVATE char *sqlite3DbStrNDup(sqlite3 *db, const char *z, size_t n){
   char *zNew;
   if( z==0 ){
     return 0;
   }
-  assert( (n&0x7fffffff)==n );
   zNew = sqlite3DbMallocRaw(db, n+1);
   if( zNew ){
     memcpy(zNew, z, (size_t)n);
@@ -34160,11 +34160,11 @@ static struct winMemData win_mem_data = {
 #define winMemGetHeap()     win_mem_data.hHeap
 #define winMemGetOwned()    win_mem_data.bOwned
 
-static void *winMemMalloc(int nBytes);
+static void *winMemMalloc(size_t nBytes);
 static void winMemFree(void *pPrior);
-static void *winMemRealloc(void *pPrior, int nBytes);
-static int winMemSize(void *p);
-static int winMemRoundup(int n);
+static void *winMemRealloc(void *pPrior, size_t nBytes);
+static size_t winMemSize(void *p);
+static size_t winMemRoundup(size_t n);
 static int winMemInit(void *pAppData);
 static void winMemShutdown(void *pAppData);
 
@@ -35166,7 +35166,7 @@ SQLITE_API int SQLITE_STDCALL sqlite3_win32_is_nt(void){
 /*
 ** Allocate nBytes of memory.
 */
-static void *winMemMalloc(int nBytes){
+static void *winMemMalloc(size_t nBytes){
   HANDLE hHeap;
   void *p;
 
@@ -35180,8 +35180,8 @@ static void *winMemMalloc(int nBytes){
   assert( nBytes>=0 );
   p = osHeapAlloc(hHeap, SQLITE_WIN32_HEAP_FLAGS, (SIZE_T)nBytes);
   if( !p ){
-    sqlite3_log(SQLITE_NOMEM, "failed to HeapAlloc %u bytes (%lu), heap=%p",
-                nBytes, osGetLastError(), (void*)hHeap);
+    sqlite3_log(SQLITE_NOMEM, "failed to HeapAlloc %u bytes (%llu), heap=%p",
+                (u64)nBytes, osGetLastError(), (void*)hHeap);
   }
   return p;
 }
@@ -35209,7 +35209,7 @@ static void winMemFree(void *pPrior){
 /*
 ** Change the size of an existing memory allocation
 */
-static void *winMemRealloc(void *pPrior, int nBytes){
+static void *winMemRealloc(void *pPrior, size_t nBytes){
   HANDLE hHeap;
   void *p;
 
@@ -35227,8 +35227,8 @@ static void *winMemRealloc(void *pPrior, int nBytes){
     p = osHeapReAlloc(hHeap, SQLITE_WIN32_HEAP_FLAGS, pPrior, (SIZE_T)nBytes);
   }
   if( !p ){
-    sqlite3_log(SQLITE_NOMEM, "failed to %s %u bytes (%lu), heap=%p",
-                pPrior ? "HeapReAlloc" : "HeapAlloc", nBytes, osGetLastError(),
+    sqlite3_log(SQLITE_NOMEM, "failed to %s %llu bytes (%lu), heap=%p",
+                pPrior ? "HeapReAlloc" : "HeapAlloc", (u64)nBytes, osGetLastError(),
                 (void*)hHeap);
   }
   return p;
@@ -35237,7 +35237,7 @@ static void *winMemRealloc(void *pPrior, int nBytes){
 /*
 ** Return the size of an outstanding allocation, in bytes.
 */
-static int winMemSize(void *p){
+static size_t winMemSize(void *p){
   HANDLE hHeap;
   SIZE_T n;
 
@@ -35255,13 +35255,13 @@ static int winMemSize(void *p){
                 p, osGetLastError(), (void*)hHeap);
     return 0;
   }
-  return (int)n;
+  return (size_t)n;
 }
 
 /*
 ** Round up a request size to the next valid allocation size.
 */
-static int winMemRoundup(int n){
+static size_t winMemRoundup(size_t n){
   return n;
 }
 
@@ -40846,7 +40846,7 @@ static int pcache1InitBulk(PCache1 *pCache){
 ** Multiple threads can run this routine at the same time.  Global variables
 ** in pcache1 need to be protected via mutex.
 */
-static void *pcache1Alloc(int nByte){
+static void *pcache1Alloc(size_t nByte){
   void *p = 0;
   assert( sqlite3_mutex_notheld(pcache1.grp.mutex) );
   if( nByte<=pcache1.szSlot ){
@@ -40869,7 +40869,7 @@ static void *pcache1Alloc(int nByte){
     p = sqlite3Malloc(nByte);
 #ifndef SQLITE_DISABLE_PAGECACHE_OVERFLOW_STATS
     if( p ){
-      int sz = sqlite3MallocSize(p);
+      size_t sz = sqlite3MallocSize(p);
       sqlite3_mutex_enter(pcache1.mutex);
       sqlite3StatusSet(SQLITE_STATUS_PAGECACHE_SIZE, nByte);
       sqlite3StatusUp(SQLITE_STATUS_PAGECACHE_OVERFLOW, sz);
@@ -41003,7 +41003,7 @@ static void pcache1FreePage(PgHdr1 *p){
 ** using sqlite3_config(SQLITE_CONFIG_PAGECACHE) option. If no such buffer
 ** exists, this function falls back to sqlite3Malloc().
 */
-SQLITE_PRIVATE void *sqlite3PageMalloc(int sz){
+SQLITE_PRIVATE void *sqlite3PageMalloc(size_t sz){
   return pcache1Alloc(sz);
 }
 
@@ -126115,9 +126115,9 @@ static void yyGrowStack(yyParser *p){
 ** A pointer to a parser.  This pointer is used in subsequent calls
 ** to sqlite3Parser and sqlite3ParserFree.
 */
-SQLITE_PRIVATE void *sqlite3ParserAlloc(void *(*mallocProc)(u64)){
+SQLITE_PRIVATE void *sqlite3ParserAlloc(void *(*mallocProc)(size_t)){
   yyParser *pParser;
-  pParser = (yyParser*)(*mallocProc)( (u64)sizeof(yyParser) );
+  pParser = (yyParser*)(*mallocProc)( sizeof(yyParser) );
   if( pParser ){
     pParser->yyidx = -1;
 #ifdef YYTRACKMAXSTACKDEPTH
@@ -136085,7 +136085,11 @@ static int fts3CreateMethod(
 ** support estimatedRows. In that case this function is a no-op.
 */
 static void fts3SetEstimatedRows(sqlite3_index_info *pIdxInfo, i64 nRow){
-  pIdxInfo->estimatedRows = nRow;
+#if SQLITE_VERSION_NUMBER>=3008002
+  if( sqlite3_libversion_number()>=3008002 ){
+    pIdxInfo->estimatedRows = nRow;
+  }
+#endif
 }
 
 /* 
@@ -154347,7 +154351,11 @@ static int rtreeFilter(
 ** support estimatedRows. In that case this function is a no-op.
 */
 static void setEstimatedRows(sqlite3_index_info *pIdxInfo, i64 nRow){
-  pIdxInfo->estimatedRows = nRow;
+#if SQLITE_VERSION_NUMBER>=3008002
+  if( sqlite3_libversion_number()>=3008002 ){
+    pIdxInfo->estimatedRows = nRow;
+  }
+#endif
 }
 
 /*
