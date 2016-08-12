@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.14.0.  By combining all the individual C code files into this 
+** version 3.14.1.  By combining all the individual C code files into this 
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -381,9 +381,9 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.14.0"
-#define SQLITE_VERSION_NUMBER 3014000
-#define SQLITE_SOURCE_ID      "2016-08-08 13:40:27 d5e98057028abcf7217d0d2b2e29bbbcdf09d6de"
+#define SQLITE_VERSION        "3.14.1"
+#define SQLITE_VERSION_NUMBER 3014001
+#define SQLITE_SOURCE_ID      "2016-08-11 18:53:32 a12d8059770df4bca59e321c266410344242bf7b"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -45144,12 +45144,30 @@ static void pcache1TruncateUnsafe(
   PCache1 *pCache,             /* The cache to truncate */
   unsigned int iLimit          /* Drop pages with this pgno or larger */
 ){
-  TESTONLY( unsigned int nPage = 0; )  /* To assert pCache->nPage is correct */
-  unsigned int h;
+  TESTONLY( int nPage = 0; )  /* To assert pCache->nPage is correct */
+  unsigned int h, iStop;
   assert( sqlite3_mutex_held(pCache->pGroup->mutex) );
-  for(h=0; h<pCache->nHash; h++){
-    PgHdr1 **pp = &pCache->apHash[h]; 
+  assert( pCache->iMaxKey >= iLimit );
+  assert( pCache->nHash > 0 );
+  if( pCache->iMaxKey - iLimit < pCache->nHash ){
+    /* If we are just shaving the last few pages off the end of the
+    ** cache, then there is no point in scanning the entire hash table.
+    ** Only scan those hash slots that might contain pages that need to
+    ** be removed. */
+    h = iLimit % pCache->nHash;
+    iStop = pCache->iMaxKey % pCache->nHash;
+    TESTONLY( nPage = -10; )  /* Disable the pCache->nPage validity check */
+  }else{
+    /* This is the general case where many pages are being removed.
+    ** It is necessary to scan the entire hash table */
+    h = pCache->nHash/2;
+    iStop = h - 1;
+  }
+  for(;;){
+    PgHdr1 **pp;
     PgHdr1 *pPage;
+    assert( h<pCache->nHash );
+    pp = &pCache->apHash[h]; 
     while( (pPage = *pp)!=0 ){
       if( pPage->iKey>=iLimit ){
         pCache->nPage--;
@@ -45158,11 +45176,13 @@ static void pcache1TruncateUnsafe(
         pcache1FreePage(pPage);
       }else{
         pp = &pPage->pNext;
-        TESTONLY( nPage++; )
+        TESTONLY( if( nPage>=0 ) nPage++; )
       }
     }
+    if( h==iStop ) break;
+    h = (h+1) % pCache->nHash;
   }
-  assert( pCache->nPage==nPage );
+  assert( nPage<0 || pCache->nPage==(unsigned)nPage );
 }
 
 /******************************************************************************/
@@ -45639,7 +45659,7 @@ static void pcache1Destroy(sqlite3_pcache *p){
   PGroup *pGroup = pCache->pGroup;
   assert( pCache->bPurgeable || (pCache->nMax==0 && pCache->nMin==0) );
   pcache1EnterMutex(pGroup);
-  pcache1TruncateUnsafe(pCache, 0);
+  if( pCache->nPage ) pcache1TruncateUnsafe(pCache, 0);
   assert( pGroup->nMaxPage >= pCache->nMax );
   pGroup->nMaxPage -= pCache->nMax;
   assert( pGroup->nMinPage >= pCache->nMin );
@@ -194263,7 +194283,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2016-08-08 13:40:27 d5e98057028abcf7217d0d2b2e29bbbcdf09d6de", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2016-08-11 18:53:32 a12d8059770df4bca59e321c266410344242bf7b", -1, SQLITE_TRANSIENT);
 }
 
 static int fts5Init(sqlite3 *db){
