@@ -2232,8 +2232,18 @@ struct sqlite3_mem_methods {
 ** be a NULL pointer, in which case the new setting is not reported back.
 ** </dd>
 **
+** <dt>SQLITE_DBCONFIG_MAINDBNAME</dt>
+** <dd> ^This option is used to change the name of the "main" database
+** schema.  ^The sole argument is a pointer to a constant UTF8 string
+** which will become the new schema name in place of "main".  ^SQLite
+** does not make a copy of the new main schema name string, so the application
+** must ensure that the argument passed into this DBCONFIG option is unchanged
+** until after the database connection closes.
+** </dd>
+**
 ** </dl>
 */
+#define SQLITE_DBCONFIG_MAINDBNAME            1000 /* const char* */
 #define SQLITE_DBCONFIG_LOOKASIDE             1001 /* void* int int */
 #define SQLITE_DBCONFIG_ENABLE_FKEY           1002 /* int int* */
 #define SQLITE_DBCONFIG_ENABLE_TRIGGER        1003 /* int int* */
@@ -13721,7 +13731,7 @@ SQLITE_PRIVATE void sqlite3OsCloseFree(sqlite3_file *);
 ** databases may be attached.
 */
 struct Db {
-  const char *zName;   /* Name of this database */
+  const char *zDbSName;      /* Name of this database. (schema name, not filename) */
   Btree *pBt;          /* The B*Tree structure for this database file */
   u8 safety_level;     /* How aggressive at syncing data to disk */
   u8 bSyncSet;         /* True if "PRAGMA synchronous=N" has been run */
@@ -34948,6 +34958,27 @@ static UnixUnusedFd *findReusableFd(const char *zPath, int flags){
 }
 
 /*
+** Find the mode, uid and gid of file zFile. 
+*/
+static int getFileMode(
+  const char *zFile,              /* File name */
+  mode_t *pMode,                  /* OUT: Permissions of zFile */
+  uid_t *pUid,                    /* OUT: uid of zFile. */
+  gid_t *pGid                     /* OUT: gid of zFile. */
+){
+  struct stat sStat;              /* Output of stat() on database file */
+  int rc = SQLITE_OK;
+  if( 0==osStat(zFile, &sStat) ){
+    *pMode = sStat.st_mode & 0777;
+    *pUid = sStat.st_uid;
+    *pGid = sStat.st_gid;
+  }else{
+    rc = SQLITE_IOERR_FSTAT;
+  }
+  return rc;
+}
+
+/*
 ** This function is called by unixOpen() to determine the unix permissions
 ** to create new files with. If no error occurs, then SQLITE_OK is returned
 ** and a value suitable for passing as the third argument to open(2) is
@@ -34982,7 +35013,6 @@ static int findCreateFileMode(
   if( flags & (SQLITE_OPEN_WAL|SQLITE_OPEN_MAIN_JOURNAL) ){
     char zDb[MAX_PATHNAME+1];     /* Database file path */
     int nDb;                      /* Number of valid bytes in zDb */
-    struct stat sStat;            /* Output of stat() on database file */
 
     /* zPath is a path to a WAL or journal file. The following block derives
     ** the path to the associated database file from zPath. This block handles
@@ -35013,15 +35043,18 @@ static int findCreateFileMode(
     memcpy(zDb, zPath, nDb);
     zDb[nDb] = '\0';
 
-    if( 0==osStat(zDb, &sStat) ){
-      *pMode = sStat.st_mode & 0777;
-      *pUid = sStat.st_uid;
-      *pGid = sStat.st_gid;
-    }else{
-      rc = SQLITE_IOERR_FSTAT;
-    }
+    rc = getFileMode(zDb, pMode, pUid, pGid);
   }else if( flags & SQLITE_OPEN_DELETEONCLOSE ){
     *pMode = 0600;
+  }else if( flags & SQLITE_OPEN_URI ){
+    /* If this is a main database file and the file was opened using a URI
+    ** filename, check for the "modeof" parameter. If present, interpret
+    ** its value as a filename and try to copy the mode, uid and gid from
+    ** that file.  */
+    const char *z = sqlite3_uri_parameter(zPath, "modeof");
+    if( z ){
+      rc = getFileMode(z, pMode, pUid, pGid);
+    }
   }
   return rc;
 }
@@ -75598,7 +75631,7 @@ static int doWalCallbacks(sqlite3 *db){
       nEntry = sqlite3PagerWalCallback(sqlite3BtreePager(pBt));
       sqlite3BtreeLeave(pBt);
       if( db->xWalCallback && nEntry>0 && rc==SQLITE_OK ){
-        rc = db->xWalCallback(db->pWalArg, db, db->aDb[i].zName, nEntry);
+        rc = db->xWalCallback(db->pWalArg, db, db->aDb[i].zDbSName, nEntry);
       }
     }
   }
@@ -81641,7 +81674,7 @@ case OP_InsertInt: {
   if( pOp->p4type==P4_TABLE && HAS_UPDATE_HOOK(db) ){
     assert( pC->isTable );
     assert( pC->iDb>=0 );
-    zDb = db->aDb[pC->iDb].zName;
+    zDb = db->aDb[pC->iDb].zDbSName;
     pTab = pOp->p4.pTab;
     assert( HasRowid(pTab) );
     op = ((pOp->p5 & OPFLAG_ISUPDATE) ? SQLITE_UPDATE : SQLITE_INSERT);
@@ -81758,7 +81791,7 @@ case OP_Delete: {
   if( pOp->p4type==P4_TABLE && HAS_UPDATE_HOOK(db) ){
     assert( pC->iDb>=0 );
     assert( pOp->p4.pTab!=0 );
-    zDb = db->aDb[pC->iDb].zName;
+    zDb = db->aDb[pC->iDb].zDbSName;
     pTab = pOp->p4.pTab;
     if( (pOp->p5 & OPFLAG_SAVEPOSITION)!=0 && pC->isTable ){
       pC->movetoTarget = sqlite3BtreeIntegerKey(pC->uc.pCursor);
@@ -82728,7 +82761,7 @@ case OP_ParseSchema: {
     initData.pzErrMsg = &p->zErrMsg;
     zSql = sqlite3MPrintf(db,
        "SELECT name, rootpage, sql FROM '%q'.%s WHERE %s ORDER BY rowid",
-       db->aDb[iDb].zName, zMaster, pOp->p4.z);
+       db->aDb[iDb].zDbSName, zMaster, pOp->p4.z);
     if( zSql==0 ){
       rc = SQLITE_NOMEM_BKPT;
     }else{
@@ -84112,7 +84145,7 @@ case OP_Init: {          /* jump */
     int i;
     for(i=0; i<db->nDb; i++){
       if( DbMaskTest(p->btreeMask, i)==0 ) continue;
-      sqlite3_file_control(db, db->aDb[i].zName, SQLITE_FCNTL_TRACE, zTrace);
+      sqlite3_file_control(db, db->aDb[i].zDbSName, SQLITE_FCNTL_TRACE, zTrace);
     }
   }
 #endif /* SQLITE_USE_FCNTL_TRACE */
@@ -84448,7 +84481,7 @@ SQLITE_API int SQLITE_STDCALL sqlite3_blob_open(
       goto blob_open_out;
     }
     pBlob->pTab = pTab;
-    pBlob->zDb = (char *) db->aDb[sqlite3SchemaToIndex(db, pTab->pSchema)].zName;
+    pBlob->zDb = (char *) db->aDb[sqlite3SchemaToIndex(db, pTab->pSchema)].zDbSName;
 
     /* Now search pTab for the exact column. */
     for(iCol=0; iCol<pTab->nCol; iCol++) {
@@ -88344,8 +88377,8 @@ static int lookupName(
       zDb = 0;
     }else{
       for(i=0; i<db->nDb; i++){
-        assert( db->aDb[i].zName );
-        if( sqlite3StrICmp(db->aDb[i].zName,zDb)==0 ){
+        assert( db->aDb[i].zDbSName );
+        if( sqlite3StrICmp(db->aDb[i].zDbSName,zDb)==0 ){
           pSchema = db->aDb[i].pSchema;
           break;
         }
@@ -94418,7 +94451,7 @@ SQLITE_PRIVATE void sqlite3AlterRenameTable(
   pTab = sqlite3LocateTableItem(pParse, 0, &pSrc->a[0]);
   if( !pTab ) goto exit_rename_table;
   iDb = sqlite3SchemaToIndex(pParse->db, pTab->pSchema);
-  zDb = db->aDb[iDb].zName;
+  zDb = db->aDb[iDb].zDbSName;
   db->flags |= SQLITE_PreferBuiltin;
 
   /* Get a NULL terminated version of the new table name. */
@@ -94616,7 +94649,7 @@ SQLITE_PRIVATE void sqlite3AlterFinishAddColumn(Parse *pParse, Token *pColDef){
 
   assert( sqlite3BtreeHoldsAllMutexes(db) );
   iDb = sqlite3SchemaToIndex(db, pNew->pSchema);
-  zDb = db->aDb[iDb].zName;
+  zDb = db->aDb[iDb].zDbSName;
   zTab = &pNew->zName[16];  /* Skip the "sqlite_altertab_" prefix on the name */
   pCol = &pNew->aCol[pNew->nCol-1];
   pDflt = pCol->pDflt;
@@ -95026,14 +95059,14 @@ static void openStatTable(
   for(i=0; i<ArraySize(aTable); i++){
     const char *zTab = aTable[i].zName;
     Table *pStat;
-    if( (pStat = sqlite3FindTable(db, zTab, pDb->zName))==0 ){
+    if( (pStat = sqlite3FindTable(db, zTab, pDb->zDbSName))==0 ){
       if( aTable[i].zCols ){
         /* The sqlite_statN table does not exist. Create it. Note that a 
         ** side-effect of the CREATE TABLE statement is to leave the rootpage 
         ** of the new table in register pParse->regRoot. This is important 
         ** because the OpenWrite opcode below will be needing it. */
         sqlite3NestedParse(pParse,
-            "CREATE TABLE %Q.%s(%s)", pDb->zName, zTab, aTable[i].zCols
+            "CREATE TABLE %Q.%s(%s)", pDb->zDbSName, zTab, aTable[i].zCols
         );
         aRoot[i] = pParse->regRoot;
         aCreateTbl[i] = OPFLAG_P2ISREG;
@@ -95048,7 +95081,7 @@ static void openStatTable(
       if( zWhere ){
         sqlite3NestedParse(pParse,
            "DELETE FROM %Q.%s WHERE %s=%Q",
-           pDb->zName, zTab, zWhereType, zWhere
+           pDb->zDbSName, zTab, zWhereType, zWhere
         );
       }else{
         /* The sqlite_stat[134] table already exists.  Delete all rows. */
@@ -95810,7 +95843,7 @@ static void analyzeOneTable(
   assert( sqlite3SchemaMutexHeld(db, iDb, 0) );
 #ifndef SQLITE_OMIT_AUTHORIZATION
   if( sqlite3AuthCheck(pParse, SQLITE_ANALYZE, pTab->zName, 0,
-      db->aDb[iDb].zName ) ){
+      db->aDb[iDb].zDbSName ) ){
     return;
   }
 #endif
@@ -96201,7 +96234,7 @@ SQLITE_PRIVATE void sqlite3Analyze(Parse *pParse, Token *pName1, Token *pName2){
     /* Form 3: Analyze the fully qualified table name */
     iDb = sqlite3TwoPartName(pParse, pName1, pName2, &pTableName);
     if( iDb>=0 ){
-      zDb = db->aDb[iDb].zName;
+      zDb = db->aDb[iDb].zDbSName;
       z = sqlite3NameFromToken(db, pTableName);
       if( z ){
         if( (pIdx = sqlite3FindIndex(db, z, zDb))!=0 ){
@@ -96661,7 +96694,7 @@ SQLITE_PRIVATE int sqlite3AnalysisLoad(sqlite3 *db, int iDb){
 
   /* Load new statistics out of the sqlite_stat1 table */
   sInfo.db = db;
-  sInfo.zDatabase = db->aDb[iDb].zName;
+  sInfo.zDatabase = db->aDb[iDb].zDbSName;
   if( sqlite3FindTable(db, "sqlite_stat1", sInfo.zDatabase)!=0 ){
     zSql = sqlite3MPrintf(db, 
         "SELECT tbl,idx,stat FROM %Q.sqlite_stat1", sInfo.zDatabase);
@@ -96804,7 +96837,7 @@ static void attachFunc(
     goto attach_error;
   }
   for(i=0; i<db->nDb; i++){
-    const char *z = db->aDb[i].zName;
+    const char *z = db->aDb[i].zDbSName;
     assert( z && zName );
     if( sqlite3StrICmp(z, zName)==0 ){
       zErrDyn = sqlite3MPrintf(db, "database %s is already in use", zName);
@@ -96869,8 +96902,8 @@ static void attachFunc(
     sqlite3BtreeLeave(aNew->pBt);
   }
   aNew->safety_level = SQLITE_DEFAULT_SYNCHRONOUS+1;
-  aNew->zName = sqlite3DbStrDup(db, zName);
-  if( rc==SQLITE_OK && aNew->zName==0 ){
+  aNew->zDbSName = sqlite3DbStrDup(db, zName);
+  if( rc==SQLITE_OK && aNew->zDbSName==0 ){
     rc = SQLITE_NOMEM_BKPT;
   }
 
@@ -96982,7 +97015,7 @@ static void detachFunc(
   for(i=0; i<db->nDb; i++){
     pDb = &db->aDb[i];
     if( pDb->pBt==0 ) continue;
-    if( sqlite3StrICmp(pDb->zName, zName)==0 ) break;
+    if( sqlite3StrICmp(pDb->zDbSName, zName)==0 ) break;
   }
 
   if( i>=db->nDb ){
@@ -97140,7 +97173,7 @@ SQLITE_PRIVATE void sqlite3FixInit(
   db = pParse->db;
   assert( db->nDb>iDb );
   pFix->pParse = pParse;
-  pFix->zDb = db->aDb[iDb].zName;
+  pFix->zDb = db->aDb[iDb].zDbSName;
   pFix->pSchema = db->aDb[iDb].pSchema;
   pFix->zType = zType;
   pFix->pName = pName;
@@ -97398,9 +97431,9 @@ SQLITE_PRIVATE int sqlite3AuthReadCol(
   const char *zCol,               /* Column name */
   int iDb                         /* Index of containing database. */
 ){
-  sqlite3 *db = pParse->db;       /* Database handle */
-  const char *zDb = db->aDb[iDb].zName; /* Name of attached database */
-  int rc;                         /* Auth callback return code */
+  sqlite3 *db = pParse->db;          /* Database handle */
+  const char *zDb = db->aDb[iDb].zDbSName; /* Schema name of attached database */
+  int rc;                            /* Auth callback return code */
 
   if( db->init.busy ) return SQLITE_OK;
   rc = db->xAuth(db->pAuthArg, SQLITE_READ, zTab,zCol,zDb,pParse->zAuthContext
@@ -97873,10 +97906,11 @@ SQLITE_PRIVATE Table *sqlite3FindTable(sqlite3 *db, const char *zName, const cha
 #endif
   for(i=OMIT_TEMPDB; i<db->nDb; i++){
     int j = (i<2) ? i^1 : i;   /* Search TEMP before MAIN */
-    if( zDatabase!=0 && sqlite3StrICmp(zDatabase, db->aDb[j].zName) ) continue;
-    assert( sqlite3SchemaMutexHeld(db, j, 0) );
-    p = sqlite3HashFind(&db->aDb[j].pSchema->tblHash, zName);
-    if( p ) break;
+    if( zDatabase==0 || sqlite3StrICmp(zDatabase, db->aDb[j].zDbSName)==0 ){
+      assert( sqlite3SchemaMutexHeld(db, j, 0) );
+      p = sqlite3HashFind(&db->aDb[j].pSchema->tblHash, zName);
+      if( p ) break;
+    }
   }
   return p;
 }
@@ -97950,7 +97984,7 @@ SQLITE_PRIVATE Table *sqlite3LocateTableItem(
   assert( p->pSchema==0 || p->zDatabase==0 );
   if( p->pSchema ){
     int iDb = sqlite3SchemaToIndex(pParse->db, p->pSchema);
-    zDb = pParse->db->aDb[iDb].zName;
+    zDb = pParse->db->aDb[iDb].zDbSName;
   }else{
     zDb = p->zDatabase;
   }
@@ -97978,7 +98012,7 @@ SQLITE_PRIVATE Index *sqlite3FindIndex(sqlite3 *db, const char *zName, const cha
     int j = (i<2) ? i^1 : i;  /* Search TEMP before MAIN */
     Schema *pSchema = db->aDb[j].pSchema;
     assert( pSchema );
-    if( zDb && sqlite3StrICmp(zDb, db->aDb[j].zName) ) continue;
+    if( zDb && sqlite3StrICmp(zDb, db->aDb[j].zDbSName) ) continue;
     assert( sqlite3SchemaMutexHeld(db, j, 0) );
     p = sqlite3HashFind(&pSchema->idxHash, zName);
     if( p ) break;
@@ -98047,8 +98081,8 @@ SQLITE_PRIVATE void sqlite3CollapseDatabaseArray(sqlite3 *db){
   for(i=j=2; i<db->nDb; i++){
     struct Db *pDb = &db->aDb[i];
     if( pDb->pBt==0 ){
-      sqlite3DbFree(db, (char *)pDb->zName);
-      pDb->zName = 0;
+      sqlite3DbFree(db, (char *)pDb->zDbSName);
+      pDb->zDbSName = 0;
       continue;
     }
     if( j<i ){
@@ -98268,7 +98302,7 @@ SQLITE_PRIVATE int sqlite3FindDbName(sqlite3 *db, const char *zName){
   if( zName ){
     Db *pDb;
     for(i=(db->nDb-1), pDb=&db->aDb[i]; i>=0; i--, pDb--){
-      if( 0==sqlite3StrICmp(pDb->zName, zName) ) break;
+      if( 0==sqlite3StrICmp(pDb->zDbSName, zName) ) break;
     }
   }
   return i;
@@ -98438,7 +98472,7 @@ SQLITE_PRIVATE void sqlite3StartTable(
        SQLITE_CREATE_VIEW,
        SQLITE_CREATE_TEMP_VIEW
     };
-    const char *zDb = db->aDb[iDb].zName;
+    const char *zDb = db->aDb[iDb].zDbSName;
     if( sqlite3AuthCheck(pParse, SQLITE_INSERT, SCHEMA_TABLE(isTemp), 0, zDb) ){
       goto begin_table_error;
     }
@@ -98457,7 +98491,7 @@ SQLITE_PRIVATE void sqlite3StartTable(
   ** collisions.
   */
   if( !IN_DECLARE_VTAB ){
-    const char *zDb = db->aDb[iDb].zName;
+    const char *zDb = db->aDb[iDb].zDbSName;
     if( SQLITE_OK!=sqlite3ReadSchema(pParse) ){
       goto begin_table_error;
     }
@@ -99550,7 +99584,7 @@ SQLITE_PRIVATE void sqlite3EndTable(
       "UPDATE %Q.%s "
          "SET type='%s', name=%Q, tbl_name=%Q, rootpage=#%d, sql=%Q "
        "WHERE rowid=#%d",
-      db->aDb[iDb].zName, SCHEMA_TABLE(iDb),
+      db->aDb[iDb].zDbSName, SCHEMA_TABLE(iDb),
       zType,
       p->zName,
       p->zName,
@@ -99571,7 +99605,7 @@ SQLITE_PRIVATE void sqlite3EndTable(
       if( pDb->pSchema->pSeqTab==0 ){
         sqlite3NestedParse(pParse,
           "CREATE TABLE %Q.sqlite_sequence(name,seq)",
-          pDb->zName
+          pDb->zDbSName
         );
       }
     }
@@ -99885,7 +99919,7 @@ static void destroyRootPage(Parse *pParse, int iTable, int iDb){
   */
   sqlite3NestedParse(pParse, 
      "UPDATE %Q.%s SET rootpage=%d WHERE #%d AND rootpage=#%d",
-     pParse->db->aDb[iDb].zName, SCHEMA_TABLE(iDb), iTable, r1, r1);
+     pParse->db->aDb[iDb].zDbSName, SCHEMA_TABLE(iDb), iTable, r1, r1);
 #endif
   sqlite3ReleaseTempReg(pParse, r1);
 }
@@ -99961,7 +99995,7 @@ static void sqlite3ClearStatTables(
   const char *zName      /* Name of index or table */
 ){
   int i;
-  const char *zDbName = pParse->db->aDb[iDb].zName;
+  const char *zDbName = pParse->db->aDb[iDb].zDbSName;
   for(i=1; i<=4; i++){
     char zTab[24];
     sqlite3_snprintf(sizeof(zTab),zTab,"sqlite_stat%d",i);
@@ -100014,7 +100048,7 @@ SQLITE_PRIVATE void sqlite3CodeDropTable(Parse *pParse, Table *pTab, int iDb, in
   if( pTab->tabFlags & TF_Autoincrement ){
     sqlite3NestedParse(pParse,
       "DELETE FROM %Q.sqlite_sequence WHERE name=%Q",
-      pDb->zName, pTab->zName
+      pDb->zDbSName, pTab->zName
     );
   }
 #endif
@@ -100028,7 +100062,7 @@ SQLITE_PRIVATE void sqlite3CodeDropTable(Parse *pParse, Table *pTab, int iDb, in
   */
   sqlite3NestedParse(pParse, 
       "DELETE FROM %Q.%s WHERE tbl_name=%Q and type!='trigger'",
-      pDb->zName, SCHEMA_TABLE(iDb), pTab->zName);
+      pDb->zDbSName, SCHEMA_TABLE(iDb), pTab->zName);
   if( !isView && !IsVirtual(pTab) ){
     destroyTable(pParse, pTab);
   }
@@ -100082,7 +100116,7 @@ SQLITE_PRIVATE void sqlite3DropTable(Parse *pParse, SrcList *pName, int isView, 
   {
     int code;
     const char *zTab = SCHEMA_TABLE(iDb);
-    const char *zDb = db->aDb[iDb].zName;
+    const char *zDb = db->aDb[iDb].zDbSName;
     const char *zArg2 = 0;
     if( sqlite3AuthCheck(pParse, SQLITE_DELETE, zTab, 0, zDb)){
       goto exit_drop_table;
@@ -100323,7 +100357,7 @@ static void sqlite3RefillIndex(Parse *pParse, Index *pIndex, int memRootPage){
 
 #ifndef SQLITE_OMIT_AUTHORIZATION
   if( sqlite3AuthCheck(pParse, SQLITE_REINDEX, pIndex->zName, 0,
-      db->aDb[iDb].zName ) ){
+      db->aDb[iDb].zDbSName ) ){
     return;
   }
 #endif
@@ -100575,7 +100609,7 @@ SQLITE_PRIVATE void sqlite3CreateIndex(
         goto exit_create_index;
       }
     }
-    if( sqlite3FindIndex(db, zName, pDb->zName)!=0 ){
+    if( sqlite3FindIndex(db, zName, pDb->zDbSName)!=0 ){
       if( !ifNotExist ){
         sqlite3ErrorMsg(pParse, "index %s already exists", zName);
       }else{
@@ -100605,7 +100639,7 @@ SQLITE_PRIVATE void sqlite3CreateIndex(
   */
 #ifndef SQLITE_OMIT_AUTHORIZATION
   {
-    const char *zDb = pDb->zName;
+    const char *zDb = pDb->zDbSName;
     if( sqlite3AuthCheck(pParse, SQLITE_INSERT, SCHEMA_TABLE(iDb), 0, zDb) ){
       goto exit_create_index;
     }
@@ -100920,7 +100954,7 @@ SQLITE_PRIVATE void sqlite3CreateIndex(
     */
     sqlite3NestedParse(pParse, 
         "INSERT INTO %Q.%s VALUES('index',%Q,%Q,#%d,%Q);",
-        db->aDb[iDb].zName, SCHEMA_TABLE(iDb),
+        db->aDb[iDb].zDbSName, SCHEMA_TABLE(iDb),
         pIndex->zName,
         pTab->zName,
         iMem,
@@ -101054,7 +101088,7 @@ SQLITE_PRIVATE void sqlite3DropIndex(Parse *pParse, SrcList *pName, int ifExists
   {
     int code = SQLITE_DROP_INDEX;
     Table *pTab = pIndex->pTable;
-    const char *zDb = db->aDb[iDb].zName;
+    const char *zDb = db->aDb[iDb].zDbSName;
     const char *zTab = SCHEMA_TABLE(iDb);
     if( sqlite3AuthCheck(pParse, SQLITE_DELETE, zTab, 0, zDb) ){
       goto exit_drop_index;
@@ -101072,7 +101106,7 @@ SQLITE_PRIVATE void sqlite3DropIndex(Parse *pParse, SrcList *pName, int ifExists
     sqlite3BeginWriteOperation(pParse, 1, iDb);
     sqlite3NestedParse(pParse,
        "DELETE FROM %Q.%s WHERE name=%Q AND type='index'",
-       db->aDb[iDb].zName, SCHEMA_TABLE(iDb), pIndex->zName
+       db->aDb[iDb].zDbSName, SCHEMA_TABLE(iDb), pIndex->zName
     );
     sqlite3ClearStatTables(pParse, iDb, "idx", pIndex->zName);
     sqlite3ChangeCookie(pParse, iDb);
@@ -101617,7 +101651,7 @@ SQLITE_PRIVATE void sqlite3CodeVerifyNamedSchema(Parse *pParse, const char *zDb)
   int i;
   for(i=0; i<db->nDb; i++){
     Db *pDb = &db->aDb[i];
-    if( pDb->pBt && (!zDb || 0==sqlite3StrICmp(zDb, pDb->zName)) ){
+    if( pDb->pBt && (!zDb || 0==sqlite3StrICmp(zDb, pDb->zDbSName)) ){
       sqlite3CodeVerifySchema(pParse, i);
     }
   }
@@ -101864,7 +101898,7 @@ SQLITE_PRIVATE void sqlite3Reindex(Parse *pParse, Token *pName1, Token *pName2){
   if( iDb<0 ) return;
   z = sqlite3NameFromToken(db, pObjName);
   if( z==0 ) return;
-  zDb = db->aDb[iDb].zName;
+  zDb = db->aDb[iDb].zDbSName;
   pTab = sqlite3FindTable(db, z, zDb);
   if( pTab ){
     reindexTable(pParse, pTab, 0);
@@ -102578,7 +102612,7 @@ SQLITE_PRIVATE void sqlite3MaterializeView(
   if( pFrom ){
     assert( pFrom->nSrc==1 );
     pFrom->a[0].zName = sqlite3DbStrDup(db, pView->zName);
-    pFrom->a[0].zDatabase = sqlite3DbStrDup(db, db->aDb[iDb].zName);
+    pFrom->a[0].zDatabase = sqlite3DbStrDup(db, db->aDb[iDb].zDbSName);
     assert( pFrom->a[0].pOn==0 );
     assert( pFrom->a[0].pUsing==0 );
   }
@@ -102765,7 +102799,7 @@ SQLITE_PRIVATE void sqlite3DeleteFrom(
   }
   iDb = sqlite3SchemaToIndex(db, pTab->pSchema);
   assert( iDb<db->nDb );
-  zDb = db->aDb[iDb].zName;
+  zDb = db->aDb[iDb].zDbSName;
   rcauth = sqlite3AuthCheck(pParse, SQLITE_DELETE, pTab->zName, 0, zDb);
   assert( rcauth==SQLITE_OK || rcauth==SQLITE_DENY || rcauth==SQLITE_IGNORE );
   if( rcauth==SQLITE_DENY ){
@@ -106097,7 +106131,7 @@ SQLITE_PRIVATE void sqlite3FkCheck(
   if( (db->flags&SQLITE_ForeignKeys)==0 ) return;
 
   iDb = sqlite3SchemaToIndex(db, pTab->pSchema);
-  zDb = db->aDb[iDb].zName;
+  zDb = db->aDb[iDb].zDbSName;
 
   /* Loop through all the foreign key constraints for which pTab is the
   ** child table (the table that the foreign key definition is part of).  */
@@ -107184,7 +107218,7 @@ SQLITE_PRIVATE void sqlite3Insert(
   iDb = sqlite3SchemaToIndex(db, pTab->pSchema);
   assert( iDb<db->nDb );
   pDb = &db->aDb[iDb];
-  zDb = pDb->zName;
+  zDb = pDb->zDbSName;
   if( sqlite3AuthCheck(pParse, SQLITE_INSERT, pTab->zName, 0, zDb) ){
     goto insert_cleanup;
   }
@@ -111165,7 +111199,7 @@ SQLITE_PRIVATE void sqlite3Pragma(
   }
 
   assert( pId2 );
-  zDb = pId2->n>0 ? pDb->zName : 0;
+  zDb = pId2->n>0 ? pDb->zDbSName : 0;
   if( sqlite3AuthCheck(pParse, SQLITE_PRAGMA, zLeft, zRight, zDb) ){
     goto pragma_out;
   }
@@ -112018,10 +112052,10 @@ SQLITE_PRIVATE void sqlite3Pragma(
     setAllColumnNames(v, 3, azCol); assert( 3==ArraySize(azCol) );
     for(i=0; i<db->nDb; i++){
       if( db->aDb[i].pBt==0 ) continue;
-      assert( db->aDb[i].zName!=0 );
+      assert( db->aDb[i].zDbSName!=0 );
       sqlite3VdbeMultiLoad(v, 1, "iss",
          i,
-         db->aDb[i].zName,
+         db->aDb[i].zDbSName,
          sqlite3BtreeGetFilename(db->aDb[i].pBt));
       sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 3);
     }
@@ -112310,7 +112344,7 @@ SQLITE_PRIVATE void sqlite3Pragma(
       sqlite3VdbeChangeP5(v, (u8)i);
       addr = sqlite3VdbeAddOp1(v, OP_IsNull, 2); VdbeCoverage(v);
       sqlite3VdbeAddOp4(v, OP_String8, 0, 3, 0,
-         sqlite3MPrintf(db, "*** in database %s ***\n", db->aDb[i].zName),
+         sqlite3MPrintf(db, "*** in database %s ***\n", db->aDb[i].zDbSName),
          P4_DYNAMIC);
       sqlite3VdbeAddOp3(v, OP_Move, 2, 4, 1);
       sqlite3VdbeAddOp3(v, OP_Concat, 4, 3, 2);
@@ -112749,15 +112783,15 @@ SQLITE_PRIVATE void sqlite3Pragma(
       Btree *pBt;
       const char *zState = "unknown";
       int j;
-      if( db->aDb[i].zName==0 ) continue;
+      if( db->aDb[i].zDbSName==0 ) continue;
       pBt = db->aDb[i].pBt;
       if( pBt==0 || sqlite3BtreePager(pBt)==0 ){
         zState = "closed";
-      }else if( sqlite3_file_control(db, i ? db->aDb[i].zName : 0, 
+      }else if( sqlite3_file_control(db, i ? db->aDb[i].zDbSName : 0, 
                                      SQLITE_FCNTL_LOCKSTATE, &j)==SQLITE_OK ){
          zState = azLockName[j];
       }
-      sqlite3VdbeMultiLoad(v, 1, "ss", db->aDb[i].zName, zState);
+      sqlite3VdbeMultiLoad(v, 1, "ss", db->aDb[i].zDbSName, zState);
       sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 2);
     }
     break;
@@ -112927,7 +112961,7 @@ SQLITE_PRIVATE int sqlite3InitCallback(void *pInit, int argc, char **argv, char 
     ** to do here is record the root page number for that index.
     */
     Index *pIndex;
-    pIndex = sqlite3FindIndex(db, argv[0], db->aDb[iDb].zName);
+    pIndex = sqlite3FindIndex(db, argv[0], db->aDb[iDb].zDbSName);
     if( pIndex==0 ){
       /* This can occur if there exists an index on a TEMP table which
       ** has the same name as another index on a permanent index.  Since
@@ -113106,7 +113140,7 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
     char *zSql;
     zSql = sqlite3MPrintf(db, 
         "SELECT name, rootpage, sql FROM \"%w\".%s ORDER BY rowid",
-        db->aDb[iDb].zName, zMasterName);
+        db->aDb[iDb].zDbSName, zMasterName);
 #ifndef SQLITE_OMIT_AUTHORIZATION
     {
       sqlite3_xauth xAuth;
@@ -113381,7 +113415,7 @@ static int sqlite3Prepare(
       assert( sqlite3BtreeHoldsMutex(pBt) );
       rc = sqlite3BtreeSchemaLocked(pBt);
       if( rc ){
-        const char *zDb = db->aDb[i].zName;
+        const char *zDb = db->aDb[i].zDbSName;
         sqlite3ErrorWithMsg(db, rc, "database schema is locked: %s", zDb);
         testcase( db->flags & SQLITE_ReadUncommitted );
         goto end_prepare;
@@ -115137,7 +115171,7 @@ static const char *columnTypeImpl(
         zOrigTab = pTab->zName;
         if( pNC->pParse ){
           int iDb = sqlite3SchemaToIndex(pNC->pParse->db, pTab->pSchema);
-          zOrigDb = pNC->pParse->db->aDb[iDb].zName;
+          zOrigDb = pNC->pParse->db->aDb[iDb].zDbSName;
         }
 #else
         if( iCol<0 ){
@@ -118093,7 +118127,7 @@ static int selectExpander(Walker *pWalker, Select *p){
               continue;
             }
             iDb = sqlite3SchemaToIndex(db, pTab->pSchema);
-            zSchemaName = iDb>=0 ? db->aDb[iDb].zName : "*";
+            zSchemaName = iDb>=0 ? db->aDb[iDb].zDbSName : "*";
           }
           for(j=0; j<pTab->nCol; j++){
             char *zName = pTab->aCol[j].zName;
@@ -119805,8 +119839,8 @@ SQLITE_PRIVATE void sqlite3BeginTrigger(
 #ifndef SQLITE_OMIT_AUTHORIZATION
   {
     int code = SQLITE_CREATE_TRIGGER;
-    const char *zDb = db->aDb[iTabDb].zName;
-    const char *zDbTrig = isTemp ? db->aDb[1].zName : zDb;
+    const char *zDb = db->aDb[iTabDb].zDbSName;
+    const char *zDbTrig = isTemp ? db->aDb[1].zDbSName : zDb;
     if( iTabDb==1 || isTemp ) code = SQLITE_CREATE_TEMP_TRIGGER;
     if( sqlite3AuthCheck(pParse, code, zName, pTab->zName, zDbTrig) ){
       goto trigger_cleanup;
@@ -119900,7 +119934,7 @@ SQLITE_PRIVATE void sqlite3FinishTrigger(
     z = sqlite3DbStrNDup(db, (char*)pAll->z, pAll->n);
     sqlite3NestedParse(pParse,
        "INSERT INTO %Q.%s VALUES('trigger',%Q,%Q,0,'CREATE TRIGGER %q')",
-       db->aDb[iDb].zName, SCHEMA_TABLE(iDb), zName,
+       db->aDb[iDb].zDbSName, SCHEMA_TABLE(iDb), zName,
        pTrig->table, z);
     sqlite3DbFree(db, z);
     sqlite3ChangeCookie(pParse, iDb);
@@ -120089,7 +120123,7 @@ SQLITE_PRIVATE void sqlite3DropTrigger(Parse *pParse, SrcList *pName, int noErr)
   assert( zDb!=0 || sqlite3BtreeHoldsAllMutexes(db) );
   for(i=OMIT_TEMPDB; i<db->nDb; i++){
     int j = (i<2) ? i^1 : i;  /* Search TEMP before MAIN */
-    if( zDb && sqlite3StrICmp(db->aDb[j].zName, zDb) ) continue;
+    if( zDb && sqlite3StrICmp(db->aDb[j].zDbSName, zDb) ) continue;
     assert( sqlite3SchemaMutexHeld(db, j, 0) );
     pTrigger = sqlite3HashFind(&(db->aDb[j].pSchema->trigHash), zName);
     if( pTrigger ) break;
@@ -120135,7 +120169,7 @@ SQLITE_PRIVATE void sqlite3DropTriggerPtr(Parse *pParse, Trigger *pTrigger){
 #ifndef SQLITE_OMIT_AUTHORIZATION
   {
     int code = SQLITE_DROP_TRIGGER;
-    const char *zDb = db->aDb[iDb].zName;
+    const char *zDb = db->aDb[iDb].zDbSName;
     const char *zTab = SCHEMA_TABLE(iDb);
     if( iDb==1 ) code = SQLITE_DROP_TEMP_TRIGGER;
     if( sqlite3AuthCheck(pParse, code, pTrigger->zName, pTable->zName, zDb) ||
@@ -120151,7 +120185,7 @@ SQLITE_PRIVATE void sqlite3DropTriggerPtr(Parse *pParse, Trigger *pTrigger){
   if( (v = sqlite3GetVdbe(pParse))!=0 ){
     sqlite3NestedParse(pParse,
        "DELETE FROM %Q.%s WHERE name=%Q AND type='trigger'",
-       db->aDb[iDb].zName, SCHEMA_TABLE(iDb), pTrigger->zName
+       db->aDb[iDb].zDbSName, SCHEMA_TABLE(iDb), pTrigger->zName
     );
     sqlite3ChangeCookie(pParse, iDb);
     sqlite3VdbeAddOp4(v, OP_DropTrigger, iDb, 0, 0, pTrigger->zName, 0);
@@ -120254,8 +120288,10 @@ static SrcList *targetSrcList(
     pSrc->a[pSrc->nSrc-1].zName = sqlite3DbStrDup(db, pStep->zTarget);
     iDb = sqlite3SchemaToIndex(db, pStep->pTrig->pSchema);
     if( iDb==0 || iDb>=2 ){
+      const char *zDb;
       assert( iDb<db->nDb );
-      pSrc->a[pSrc->nSrc-1].zDatabase = sqlite3DbStrDup(db, db->aDb[iDb].zName);
+      zDb = db->aDb[iDb].zDbSName;
+      pSrc->a[pSrc->nSrc-1].zDatabase =  sqlite3DbStrDup(db, zDb);
     }
   }
   return pSrc;
@@ -120942,7 +120978,7 @@ SQLITE_PRIVATE void sqlite3Update(
       int rc;
       rc = sqlite3AuthCheck(pParse, SQLITE_UPDATE, pTab->zName,
                             j<0 ? "ROWID" : pTab->aCol[j].zName,
-                            db->aDb[iDb].zName);
+                            db->aDb[iDb].zDbSName);
       if( rc==SQLITE_DENY ){
         goto update_cleanup;
       }else if( rc==SQLITE_IGNORE ){
@@ -121699,7 +121735,7 @@ SQLITE_PRIVATE int sqlite3RunVacuum(char **pzErrMsg, sqlite3 *db){
   rc = execSql(db, pzErrMsg, zSql);
   if( db->nDb>nDb ){
     pDb = &db->aDb[db->nDb-1];
-    assert( strcmp(pDb->zName,"vacuum_db")==0 );
+    assert( strcmp(pDb->zDbSName,"vacuum_db")==0 );
   }
   if( rc!=SQLITE_OK ) goto end_of_vacuum;
   pTemp = db->aDb[db->nDb-1].pBt;
@@ -122249,7 +122285,7 @@ SQLITE_PRIVATE void sqlite3VtabBeginParse(
   */
   if( pTable->azModuleArg ){
     sqlite3AuthCheck(pParse, SQLITE_CREATE_VTABLE, pTable->zName, 
-            pTable->azModuleArg[0], pParse->db->aDb[iDb].zName);
+            pTable->azModuleArg[0], pParse->db->aDb[iDb].zDbSName);
   }
 #endif
 }
@@ -122313,7 +122349,7 @@ SQLITE_PRIVATE void sqlite3VtabFinishParse(Parse *pParse, Token *pEnd){
       "UPDATE %Q.%s "
          "SET type='table', name=%Q, tbl_name=%Q, rootpage=0, sql=%Q "
        "WHERE rowid=#%d",
-      db->aDb[iDb].zName, SCHEMA_TABLE(iDb),
+      db->aDb[iDb].zDbSName, SCHEMA_TABLE(iDb),
       pTab->zName,
       pTab->zName,
       zStmt,
@@ -122423,7 +122459,7 @@ static int vtabCallConstructor(
   pVTable->pMod = pMod;
 
   iDb = sqlite3SchemaToIndex(db, pTab->pSchema);
-  pTab->azModuleArg[1] = (char *)db->aDb[iDb].zName;
+  pTab->azModuleArg[1] = (char *)db->aDb[iDb].zDbSName;
 
   /* Invoke the virtual table constructor */
   assert( &db->pVtabCtx );
@@ -122587,7 +122623,7 @@ SQLITE_PRIVATE int sqlite3VtabCallCreate(sqlite3 *db, int iDb, const char *zTab,
   Module *pMod;
   const char *zMod;
 
-  pTab = sqlite3FindTable(db, zTab, db->aDb[iDb].zName);
+  pTab = sqlite3FindTable(db, zTab, db->aDb[iDb].zDbSName);
   assert( pTab && (pTab->tabFlags & TF_Virtual)!=0 && !pTab->pVTable );
 
   /* Locate the required virtual table module */
@@ -122711,7 +122747,7 @@ SQLITE_PRIVATE int sqlite3VtabCallDestroy(sqlite3 *db, int iDb, const char *zTab
   int rc = SQLITE_OK;
   Table *pTab;
 
-  pTab = sqlite3FindTable(db, zTab, db->aDb[iDb].zName);
+  pTab = sqlite3FindTable(db, zTab, db->aDb[iDb].zDbSName);
   if( pTab!=0 && ALWAYS(pTab->pVTable!=0) ){
     VTable *p;
     int (*xDestroy)(sqlite3_vtab *);
@@ -137503,6 +137539,11 @@ SQLITE_API int SQLITE_CDECL sqlite3_db_config(sqlite3 *db, int op, ...){
   int rc;
   va_start(ap, op);
   switch( op ){
+    case SQLITE_DBCONFIG_MAINDBNAME: {
+      db->aDb[0].zDbSName = va_arg(ap,char*);
+      rc = SQLITE_OK;
+      break;
+    }
     case SQLITE_DBCONFIG_LOOKASIDE: {
       void *pBuf = va_arg(ap, void*); /* IMP: R-26835-10964 */
       int sz = va_arg(ap, int);       /* IMP: R-47871-25994 */
@@ -139648,9 +139689,9 @@ static int openDatabase(
   /* The default safety_level for the main database is FULL; for the temp
   ** database it is OFF. This matches the pager layer defaults.  
   */
-  db->aDb[0].zName = "main";
+  db->aDb[0].zDbSName = "main";
   db->aDb[0].safety_level = SQLITE_DEFAULT_SYNCHRONOUS+1;
-  db->aDb[1].zName = "temp";
+  db->aDb[1].zDbSName = "temp";
   db->aDb[1].safety_level = PAGER_SYNCHRONOUS_OFF;
 
   db->magic = SQLITE_MAGIC_OPEN;
@@ -140614,7 +140655,7 @@ SQLITE_PRIVATE Btree *sqlite3DbNameToBtree(sqlite3 *db, const char *zDbName){
   int i;
   for(i=0; i<db->nDb; i++){
     if( db->aDb[i].pBt
-     && (zDbName==0 || sqlite3StrICmp(zDbName, db->aDb[i].zName)==0)
+     && (zDbName==0 || sqlite3StrICmp(zDbName, db->aDb[i].zDbSName)==0)
     ){
       return db->aDb[i].pBt;
     }
@@ -165019,15 +165060,21 @@ SQLITE_API sqlite3rbu *SQLITE_STDCALL sqlite3rbu_open(
 ** An RBU vacuum is similar to SQLite's built-in VACUUM command, except
 ** that it can be suspended and resumed like an RBU update.
 **
-** The second argument to this function, which may not be NULL, identifies 
-** a database in which to store the state of the RBU vacuum operation if
-** it is suspended. The first time sqlite3rbu_vacuum() is called, to start
-** an RBU vacuum operation, the state database should either not exist or
-** be empty (contain no tables). If an RBU vacuum is suspended by calling
+** The second argument to this function identifies a database in which 
+** to store the state of the RBU vacuum operation if it is suspended. The 
+** first time sqlite3rbu_vacuum() is called, to start an RBU vacuum
+** operation, the state database should either not exist or be empty
+** (contain no tables). If an RBU vacuum is suspended by calling 
 ** sqlite3rbu_close() on the RBU handle before sqlite3rbu_step() has
 ** returned SQLITE_DONE, the vacuum state is stored in the state database. 
 ** The vacuum can be resumed by calling this function to open a new RBU
 ** handle specifying the same target and state databases.
+**
+** If the second argument passed to this function is NULL, then the
+** name of the state database is "<database>-vacuum", where <database>
+** is the name of the target database file. In this case, on UNIX, if the
+** state database is not already present in the file-system, it is created
+** with the same permissions as the target db is made.
 **
 ** This function does not delete the state database after an RBU vacuum
 ** is completed, even if it created it. However, if the call to
@@ -167520,15 +167567,18 @@ static RbuState *rbuLoadState(sqlite3rbu *p){
 ** error occurs, leave an error code and message in the RBU handle.
 */
 static void rbuOpenDatabase(sqlite3rbu *p){
-  assert( p->rc==SQLITE_OK );
-  assert( p->dbMain==0 && p->dbRbu==0 );
-  assert( rbuIsVacuum(p) || p->zTarget!=0 );
+  assert( p->rc || (p->dbMain==0 && p->dbRbu==0) );
+  assert( p->rc || rbuIsVacuum(p) || p->zTarget!=0 );
 
   /* Open the RBU database */
   p->dbRbu = rbuOpenDbhandle(p, p->zRbu, 1);
 
   if( p->rc==SQLITE_OK && rbuIsVacuum(p) ){
     sqlite3_file_control(p->dbRbu, "main", SQLITE_FCNTL_RBUCNT, (void*)p);
+    if( p->zState==0 ){
+      const char *zFile = sqlite3_db_filename(p->dbRbu, "main");
+      p->zState = rbuMPrintf(p, "file://%s-vacuum?modeof=%s", zFile, zFile);
+    }
   }
 
   /* If using separate RBU and state databases, attach the state database to
@@ -168663,8 +168713,7 @@ static sqlite3rbu *openRbuHandle(
   sqlite3rbu *p;
   size_t nTarget = zTarget ? strlen(zTarget) : 0;
   size_t nRbu = strlen(zRbu);
-  size_t nState = zState ? strlen(zState) : 0;
-  size_t nByte = sizeof(sqlite3rbu) + nTarget+1 + nRbu+1+ nState+1;
+  size_t nByte = sizeof(sqlite3rbu) + nTarget+1 + nRbu+1;
 
   p = (sqlite3rbu*)sqlite3_malloc64(nByte);
   if( p ){
@@ -168686,8 +168735,7 @@ static sqlite3rbu *openRbuHandle(
       memcpy(p->zRbu, zRbu, nRbu+1);
       pCsr += nRbu+1;
       if( zState ){
-        p->zState = pCsr;
-        memcpy(p->zState, zState, nState+1);
+        p->zState = rbuMPrintf(p, "%s", zState);
       }
       rbuOpenDatabase(p);
     }
@@ -168798,6 +168846,20 @@ static sqlite3rbu *openRbuHandle(
 }
 
 /*
+** Allocate and return an RBU handle with all fields zeroed except for the
+** error code, which is set to SQLITE_MISUSE.
+*/
+static sqlite3rbu *rbuMisuseError(void){
+  sqlite3rbu *pRet;
+  pRet = sqlite3_malloc64(sizeof(sqlite3rbu));
+  if( pRet ){
+    memset(pRet, 0, sizeof(sqlite3rbu));
+    pRet->rc = SQLITE_MISUSE;
+  }
+  return pRet;
+}
+
+/*
 ** Open and return a new RBU handle. 
 */
 SQLITE_API sqlite3rbu *SQLITE_STDCALL sqlite3rbu_open(
@@ -168805,6 +168867,7 @@ SQLITE_API sqlite3rbu *SQLITE_STDCALL sqlite3rbu_open(
   const char *zRbu,
   const char *zState
 ){
+  if( zTarget==0 || zRbu==0 ){ return rbuMisuseError(); }
   /* TODO: Check that zTarget and zRbu are non-NULL */
   return openRbuHandle(zTarget, zRbu, zState);
 }
@@ -168816,6 +168879,7 @@ SQLITE_API sqlite3rbu *SQLITE_STDCALL sqlite3rbu_vacuum(
   const char *zTarget, 
   const char *zState
 ){
+  if( zTarget==0 ){ return rbuMisuseError(); }
   /* TODO: Check that both arguments are non-NULL */
   return openRbuHandle(0, zTarget, zState);
 }
@@ -168893,6 +168957,7 @@ SQLITE_API int SQLITE_STDCALL sqlite3rbu_close(sqlite3rbu *p, char **pzErrmsg){
     rbuEditErrmsg(p);
     rc = p->rc;
     *pzErrmsg = p->zErrmsg;
+    sqlite3_free(p->zState);
     sqlite3_free(p);
   }else{
     rc = SQLITE_NOMEM;
@@ -170504,7 +170569,7 @@ static int statFilter(
       "  UNION ALL  "
       "SELECT name, rootpage, type"
       "  FROM \"%w\".%s WHERE rootpage!=0"
-      "  ORDER BY name", pTab->db->aDb[pCsr->iDb].zName, zMaster);
+      "  ORDER BY name", pTab->db->aDb[pCsr->iDb].zDbSName, zMaster);
   if( zSql==0 ){
     return SQLITE_NOMEM_BKPT;
   }else{
@@ -170558,7 +170623,7 @@ static int statColumn(
     default: {          /* schema */
       sqlite3 *db = sqlite3_context_db_handle(ctx);
       int iDb = pCsr->iDb;
-      sqlite3_result_text(ctx, db->aDb[iDb].zName, -1, SQLITE_STATIC);
+      sqlite3_result_text(ctx, db->aDb[iDb].zDbSName, -1, SQLITE_STATIC);
       break;
     }
   }
