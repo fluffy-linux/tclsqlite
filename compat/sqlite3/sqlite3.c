@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.15.0.  By combining all the individual C code files into this
+** version 3.15.1.  By combining all the individual C code files into this
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -382,9 +382,9 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.15.0"
-#define SQLITE_VERSION_NUMBER 3015000
-#define SQLITE_SOURCE_ID      "2016-10-14 10:20:30 707875582fcba352b4906a595ad89198d84711d8"
+#define SQLITE_VERSION        "3.15.1"
+#define SQLITE_VERSION_NUMBER 3015001
+#define SQLITE_SOURCE_ID      "2016-11-04 12:08:49 1136863c76576110e710dd5d69ab6bf347c65e36"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -1239,6 +1239,12 @@ struct sqlite3_io_methods {
 ** on whether or not the file has been renamed, moved, or deleted since it
 ** was first opened.
 **
+** <li>[[SQLITE_FCNTL_WIN32_GET_HANDLE]]
+** The [SQLITE_FCNTL_WIN32_GET_HANDLE] opcode can be used to obtain the
+** underlying native file handle associated with a file handle.  This file
+** control interprets its argument as a pointer to a native file handle and
+** writes the resulting value there.
+**
 ** <li>[[SQLITE_FCNTL_WIN32_SET_HANDLE]]
 ** The [SQLITE_FCNTL_WIN32_SET_HANDLE] opcode is used for debugging.  This
 ** opcode causes the xFileControl method to swap the file handle with the one
@@ -1289,6 +1295,7 @@ struct sqlite3_io_methods {
 #define SQLITE_FCNTL_RBU                    26
 #define SQLITE_FCNTL_VFS_POINTER            27
 #define SQLITE_FCNTL_JOURNAL_POINTER        28
+#define SQLITE_FCNTL_WIN32_GET_HANDLE       29
 
 /* deprecated names */
 #define SQLITE_GET_LOCKPROXYFILE      SQLITE_FCNTL_GET_LOCKPROXYFILE
@@ -13057,7 +13064,7 @@ SQLITE_PRIVATE int sqlite3PagerOpen(
   int,
   void(*)(DbPage*)
 );
-SQLITE_PRIVATE int sqlite3PagerClose(Pager *pPager);
+SQLITE_PRIVATE int sqlite3PagerClose(Pager *pPager, sqlite3*);
 SQLITE_PRIVATE int sqlite3PagerReadFileheader(Pager*, int, unsigned char*);
 
 /* Functions used to configure a Pager object. */
@@ -13108,15 +13115,18 @@ SQLITE_PRIVATE int sqlite3PagerSavepoint(Pager *pPager, int op, int iSavepoint);
 SQLITE_PRIVATE int sqlite3PagerSharedLock(Pager *pPager);
 
 #ifndef SQLITE_OMIT_WAL
-SQLITE_PRIVATE   int sqlite3PagerCheckpoint(Pager *pPager, int, int*, int*);
+SQLITE_PRIVATE   int sqlite3PagerCheckpoint(Pager *pPager, sqlite3*, int, int*, int*);
 SQLITE_PRIVATE   int sqlite3PagerWalSupported(Pager *pPager);
 SQLITE_PRIVATE   int sqlite3PagerWalCallback(Pager *pPager);
 SQLITE_PRIVATE   int sqlite3PagerOpenWal(Pager *pPager, int *pisOpen);
-SQLITE_PRIVATE   int sqlite3PagerCloseWal(Pager *pPager);
+SQLITE_PRIVATE   int sqlite3PagerCloseWal(Pager *pPager, sqlite3*);
+SQLITE_PRIVATE   int sqlite3PagerUseWal(Pager *pPager);
 # ifdef SQLITE_ENABLE_SNAPSHOT
 SQLITE_PRIVATE   int sqlite3PagerSnapshotGet(Pager *pPager, sqlite3_snapshot **ppSnapshot);
 SQLITE_PRIVATE   int sqlite3PagerSnapshotOpen(Pager *pPager, sqlite3_snapshot *pSnapshot);
 # endif
+#else
+# define sqlite3PagerUseWal(x) 0
 #endif
 
 #ifdef SQLITE_ENABLE_ZIPVFS
@@ -14087,6 +14097,7 @@ struct sqlite3 {
 #define SQLITE_Vacuum         0x10000000  /* Currently in a VACUUM */
 #define SQLITE_CellSizeCk     0x20000000  /* Check btree cell sizes on load */
 #define SQLITE_Fts3Tokenizer  0x40000000  /* Enable fts3_tokenizer(2) */
+#define SQLITE_NoCkptOnClose  0x80000000  /* No checkpoint on close()/DETACH */
 
 
 /*
@@ -16126,6 +16137,9 @@ SQLITE_PRIVATE int sqlite3HeapNearlyFull(void);
 ** that deal with sqlite3StackAlloc() failures to be unreachable.
 */
 #ifdef SQLITE_USE_ALLOCA
+#if !defined(alloca) && defined(_WIN32)
+# define alloca _alloca
+#endif
 # define sqlite3StackAllocRaw(D,N)   alloca(N)
 # define sqlite3StackAllocZero(D,N)  memset(alloca(N), 0, N)
 # define sqlite3StackFree(D,P)
@@ -18152,8 +18166,8 @@ struct PreUpdate {
   int iNewReg;                    /* Register for new.* values */
   i64 iKey1;                      /* First key value passed to hook */
   i64 iKey2;                      /* Second key value passed to hook */
-  int iPKey;                      /* If not negative index of IPK column */
   Mem *aNew;                      /* Array of new.* values */
+  Table *pTab;                    /* Schema object being upated */          
 };
 
 /*
@@ -24669,8 +24683,7 @@ SQLITE_PRIVATE char *sqlite3DbStrDup(sqlite3 *db, const char *z){
   if( z==0 ){
     return 0;
   }
-  n = sqlite3Strlen30(z) + 1;
-  assert( (n&0x7fffffff)==n );
+  n = strlen(z) + 1;
   zNew = sqlite3DbMallocRaw(db, n);
   if( zNew ){
     memcpy(zNew, z, n);
@@ -40778,6 +40791,12 @@ static int winFileControl(sqlite3_file *id, int op, void *pArg){
       OSTRACE(("FCNTL file=%p, rc=SQLITE_OK\n", pFile->h));
       return SQLITE_OK;
     }
+    case SQLITE_FCNTL_WIN32_GET_HANDLE: {
+      LPHANDLE phFile = (LPHANDLE)pArg;
+      *phFile = pFile->h;
+      OSTRACE(("FCNTL file=%p, rc=SQLITE_OK\n", pFile->h));
+      return SQLITE_OK;
+    }
 #ifdef SQLITE_TEST
     case SQLITE_FCNTL_WIN32_SET_HANDLE: {
       LPHANDLE phFile = (LPHANDLE)pArg;
@@ -46397,7 +46416,7 @@ SQLITE_PRIVATE int sqlite3RowSetTest(RowSet *pRowSet, int iBatch, sqlite3_int64 
 #ifdef SQLITE_OMIT_WAL
 # define sqlite3WalOpen(x,y,z)                   0
 # define sqlite3WalLimit(x,y)
-# define sqlite3WalClose(w,x,y,z)                0
+# define sqlite3WalClose(v,w,x,y,z)              0
 # define sqlite3WalBeginReadTransaction(y,z)     0
 # define sqlite3WalEndReadTransaction(z)
 # define sqlite3WalDbsize(y)                     0
@@ -46407,7 +46426,7 @@ SQLITE_PRIVATE int sqlite3RowSetTest(RowSet *pRowSet, int iBatch, sqlite3_int64 
 # define sqlite3WalSavepoint(y,z)
 # define sqlite3WalSavepointUndo(y,z)            0
 # define sqlite3WalFrames(u,v,w,x,y,z)           0
-# define sqlite3WalCheckpoint(r,s,t,u,v,w,x,y,z) 0
+# define sqlite3WalCheckpoint(q,r,s,t,u,v,w,x,y,z) 0
 # define sqlite3WalCallback(z)                   0
 # define sqlite3WalExclusiveMode(y,z)            0
 # define sqlite3WalHeapMemory(z)                 0
@@ -46425,7 +46444,7 @@ typedef struct Wal Wal;
 
 /* Open and close a connection to a write-ahead log. */
 SQLITE_PRIVATE int sqlite3WalOpen(sqlite3_vfs*, sqlite3_file*, const char *, int, i64, Wal**);
-SQLITE_PRIVATE int sqlite3WalClose(Wal *pWal, int sync_flags, int, u8 *);
+SQLITE_PRIVATE int sqlite3WalClose(Wal *pWal, sqlite3*, int sync_flags, int, u8 *);
 
 /* Set the limiting size of a WAL file. */
 SQLITE_PRIVATE void sqlite3WalLimit(Wal*, i64);
@@ -46468,6 +46487,7 @@ SQLITE_PRIVATE int sqlite3WalFrames(Wal *pWal, int, PgHdr *, Pgno, int, int);
 /* Copy pages from the log to the database file */ 
 SQLITE_PRIVATE int sqlite3WalCheckpoint(
   Wal *pWal,                      /* Write-ahead log connection */
+  sqlite3 *db,                    /* Check this handle's interrupt flag */
   int eMode,                      /* One of PASSIVE, FULL and RESTART */
   int (*xBusy)(void*),            /* Function to call when busy */
   void *pBusyArg,                 /* Context argument for xBusyHandler */
@@ -47312,9 +47332,10 @@ static const unsigned char aJournalMagic[] = {
 ** rollback journal. Otherwise false.
 */
 #ifndef SQLITE_OMIT_WAL
-static int pagerUseWal(Pager *pPager){
+SQLITE_PRIVATE int sqlite3PagerUseWal(Pager *pPager){
   return (pPager->pWal!=0);
 }
+# define pagerUseWal(x) sqlite3PagerUseWal(x)
 #else
 # define pagerUseWal(x) 0
 # define pagerRollbackWal(x) 0
@@ -50516,7 +50537,7 @@ static void pagerFreeMapHdrs(Pager *pPager){
 ** a hot journal may be left in the filesystem but no error is returned
 ** to the caller.
 */
-SQLITE_PRIVATE int sqlite3PagerClose(Pager *pPager){
+SQLITE_PRIVATE int sqlite3PagerClose(Pager *pPager, sqlite3 *db){
   u8 *pTmp = (u8 *)pPager->pTmpSpace;
 
   assert( assert_pager_state(pPager) );
@@ -50526,7 +50547,7 @@ SQLITE_PRIVATE int sqlite3PagerClose(Pager *pPager){
   /* pPager->errCode = 0; */
   pPager->exclusiveMode = 0;
 #ifndef SQLITE_OMIT_WAL
-  sqlite3WalClose(pPager->pWal, pPager->ckptSyncFlags, pPager->pageSize, pTmp);
+  sqlite3WalClose(pPager->pWal,db,pPager->ckptSyncFlags,pPager->pageSize,pTmp);
   pPager->pWal = 0;
 #endif
   pager_reset(pPager);
@@ -53689,10 +53710,16 @@ SQLITE_PRIVATE void sqlite3PagerClearCache(Pager *pPager){
 **
 ** Parameter eMode is one of SQLITE_CHECKPOINT_PASSIVE, FULL or RESTART.
 */
-SQLITE_PRIVATE int sqlite3PagerCheckpoint(Pager *pPager, int eMode, int *pnLog, int *pnCkpt){
+SQLITE_PRIVATE int sqlite3PagerCheckpoint(
+  Pager *pPager,                  /* Checkpoint on this pager */
+  sqlite3 *db,                    /* Db handle used to check for interrupts */
+  int eMode,                      /* Type of checkpoint */
+  int *pnLog,                     /* OUT: Final number of frames in log */
+  int *pnCkpt                     /* OUT: Final number of checkpointed frames */
+){
   int rc = SQLITE_OK;
   if( pPager->pWal ){
-    rc = sqlite3WalCheckpoint(pPager->pWal, eMode,
+    rc = sqlite3WalCheckpoint(pPager->pWal, db, eMode,
         (eMode==SQLITE_CHECKPOINT_PASSIVE ? 0 : pPager->xBusyHandler),
         pPager->pBusyHandlerArg,
         pPager->ckptSyncFlags, pPager->pageSize, (u8 *)pPager->pTmpSpace,
@@ -53824,7 +53851,7 @@ SQLITE_PRIVATE int sqlite3PagerOpenWal(
 ** error (SQLITE_BUSY) is returned and the log connection is not closed.
 ** If successful, the EXCLUSIVE lock is not released before returning.
 */
-SQLITE_PRIVATE int sqlite3PagerCloseWal(Pager *pPager){
+SQLITE_PRIVATE int sqlite3PagerCloseWal(Pager *pPager, sqlite3 *db){
   int rc = SQLITE_OK;
 
   assert( pPager->journalMode==PAGER_JOURNALMODE_WAL );
@@ -53852,7 +53879,7 @@ SQLITE_PRIVATE int sqlite3PagerCloseWal(Pager *pPager){
   if( rc==SQLITE_OK && pPager->pWal ){
     rc = pagerExclusiveLock(pPager);
     if( rc==SQLITE_OK ){
-      rc = sqlite3WalClose(pPager->pWal, pPager->ckptSyncFlags,
+      rc = sqlite3WalClose(pPager->pWal, db, pPager->ckptSyncFlags,
                            pPager->pageSize, (u8*)pPager->pTmpSpace);
       pPager->pWal = 0;
       pagerFixMaplimit(pPager);
@@ -55635,6 +55662,7 @@ static void walRestartHdr(Wal *pWal, u32 salt1){
 */
 static int walCheckpoint(
   Wal *pWal,                      /* Wal connection */
+  sqlite3 *db,                    /* Check for interrupts on this handle */
   int eMode,                      /* One of PASSIVE, FULL or RESTART */
   int (*xBusy)(void*),            /* Function to call when busy */
   void *pBusyArg,                 /* Context argument for xBusyHandler */
@@ -55833,6 +55861,7 @@ static void walLimitSize(Wal *pWal, i64 nMax){
 */
 SQLITE_PRIVATE int sqlite3WalClose(
   Wal *pWal,                      /* Wal to close */
+  sqlite3 *db,                    /* For interrupt flag */
   int sync_flags,                 /* Flags to pass to OsSync() (or 0) */
   int nBuf,
   u8 *zBuf                        /* Buffer of at least nBuf bytes */
@@ -55849,13 +55878,14 @@ SQLITE_PRIVATE int sqlite3WalClose(
     **
     ** The EXCLUSIVE lock is not released before returning.
     */
-    rc = sqlite3OsLock(pWal->pDbFd, SQLITE_LOCK_EXCLUSIVE);
-    if( rc==SQLITE_OK ){
+    if( (!db || (db->flags & SQLITE_NoCkptOnClose)==0)
+     && SQLITE_OK==(rc = sqlite3OsLock(pWal->pDbFd, SQLITE_LOCK_EXCLUSIVE))
+    ){
       if( pWal->exclusiveMode==WAL_NORMAL_MODE ){
         pWal->exclusiveMode = WAL_EXCLUSIVE_MODE;
       }
-      rc = sqlite3WalCheckpoint(
-          pWal, SQLITE_CHECKPOINT_PASSIVE, 0, 0, sync_flags, nBuf, zBuf, 0, 0
+      rc = sqlite3WalCheckpoint(pWal, db,
+          SQLITE_CHECKPOINT_PASSIVE, 0, 0, sync_flags, nBuf, zBuf, 0, 0
       );
       if( rc==SQLITE_OK ){
         int bPersist = -1;
@@ -57103,6 +57133,7 @@ SQLITE_PRIVATE int sqlite3WalFrames(
 */
 SQLITE_PRIVATE int sqlite3WalCheckpoint(
   Wal *pWal,                      /* Wal connection */
+  sqlite3 *db,                    /* Check this handle's interrupt flag */
   int eMode,                      /* PASSIVE, FULL, RESTART, or TRUNCATE */
   int (*xBusy)(void*),            /* Function to call when busy */
   void *pBusyArg,                 /* Context argument for xBusyHandler */
@@ -57177,7 +57208,7 @@ SQLITE_PRIVATE int sqlite3WalCheckpoint(
     if( pWal->hdr.mxFrame && walPagesize(pWal)!=nBuf ){
       rc = SQLITE_CORRUPT_BKPT;
     }else{
-      rc = walCheckpoint(pWal, eMode2, xBusy2, pBusyArg, sync_flags, zBuf);
+      rc = walCheckpoint(pWal, db, eMode2, xBusy2, pBusyArg, sync_flags, zBuf);
     }
 
     /* If no error occurred, set the output variables. */
@@ -60767,7 +60798,7 @@ SQLITE_PRIVATE int sqlite3BtreeOpen(
 btree_open_out:
   if( rc!=SQLITE_OK ){
     if( pBt && pBt->pPager ){
-      sqlite3PagerClose(pBt->pPager);
+      sqlite3PagerClose(pBt->pPager, 0);
     }
     sqlite3_free(pBt);
     sqlite3_free(p);
@@ -60909,7 +60940,7 @@ SQLITE_PRIVATE int sqlite3BtreeClose(Btree *p){
     ** Clean out and delete the BtShared object.
     */
     assert( !pBt->pCursor );
-    sqlite3PagerClose(pBt->pPager);
+    sqlite3PagerClose(pBt->pPager, p->db);
     if( pBt->xFreeSchema && pBt->pSchema ){
       pBt->xFreeSchema(pBt->pSchema);
     }
@@ -62973,7 +63004,7 @@ static int accessPayload(
          && (bEnd || a==ovflSize)                              /* (6) */
          && pBt->inTransaction==TRANS_READ                     /* (4) */
          && (fd = sqlite3PagerFile(pBt->pPager))->pMethods     /* (3) */
-         && pBt->pPage1->aData[19]==0x01                       /* (5) */
+         && 0==sqlite3PagerUseWal(pBt->pPager)                 /* (5) */
          && &pBuf[-4]>=pBufStart                               /* (7) */
         ){
           u8 aSave[4];
@@ -67849,7 +67880,7 @@ SQLITE_PRIVATE int sqlite3BtreeCheckpoint(Btree *p, int eMode, int *pnLog, int *
     if( pBt->inTransaction!=TRANS_NONE ){
       rc = SQLITE_LOCKED;
     }else{
-      rc = sqlite3PagerCheckpoint(pBt->pPager, eMode, pnLog, pnCkpt);
+      rc = sqlite3PagerCheckpoint(pBt->pPager, p->db, eMode, pnLog, pnCkpt);
     }
     sqlite3BtreeLeave(p);
   }
@@ -75224,7 +75255,7 @@ SQLITE_PRIVATE void sqlite3VdbePreUpdateHook(
   preupdate.keyinfo.aSortOrder = (u8*)&fakeSortOrder;
   preupdate.iKey1 = iKey1;
   preupdate.iKey2 = iKey2;
-  preupdate.iPKey = pTab->iPKey;
+  preupdate.pTab = pTab;
 
   db->pPreUpdate = &preupdate;
   db->xPreUpdateCallback(db->pPreUpdateArg, db, op, zDb, zTbl, iKey1, iKey2);
@@ -76971,9 +77002,14 @@ SQLITE_API int sqlite3_preupdate_old(sqlite3 *db, int iIdx, sqlite3_value **ppVa
   if( iIdx>=p->pUnpacked->nField ){
     *ppValue = (sqlite3_value *)columnNullValue();
   }else{
+    Mem *pMem = *ppValue = &p->pUnpacked->aMem[iIdx];
     *ppValue = &p->pUnpacked->aMem[iIdx];
-    if( iIdx==p->iPKey ){
-      sqlite3VdbeMemSetInt64(*ppValue, p->iKey1);
+    if( iIdx==p->pTab->iPKey ){
+      sqlite3VdbeMemSetInt64(pMem, p->iKey1);
+    }else if( p->pTab->aCol[iIdx].affinity==SQLITE_AFF_REAL ){
+      if( pMem->flags & MEM_Int ){
+        sqlite3VdbeMemRealify(pMem);
+      }
     }
   }
 
@@ -77050,7 +77086,7 @@ SQLITE_API int sqlite3_preupdate_new(sqlite3 *db, int iIdx, sqlite3_value **ppVa
       pMem = (sqlite3_value *)columnNullValue();
     }else{
       pMem = &pUnpack->aMem[iIdx];
-      if( iIdx==p->iPKey ){
+      if( iIdx==p->pTab->iPKey ){
         sqlite3VdbeMemSetInt64(pMem, p->iKey2);
       }
     }
@@ -77071,7 +77107,7 @@ SQLITE_API int sqlite3_preupdate_new(sqlite3 *db, int iIdx, sqlite3_value **ppVa
     assert( iIdx>=0 && iIdx<p->pCsr->nField );
     pMem = &p->aNew[iIdx];
     if( pMem->flags==0 ){
-      if( iIdx==p->iPKey ){
+      if( iIdx==p->pTab->iPKey ){
         sqlite3VdbeMemSetInt64(pMem, p->iKey2);
       }else{
         rc = sqlite3VdbeMemCopy(pMem, &p->v->aMem[p->iNewReg+1+iIdx]);
@@ -83718,7 +83754,7 @@ case OP_JournalMode: {    /* out2 */
         ** file. An EXCLUSIVE lock may still be held on the database file 
         ** after a successful return. 
         */
-        rc = sqlite3PagerCloseWal(pPager);
+        rc = sqlite3PagerCloseWal(pPager, db);
         if( rc==SQLITE_OK ){
           sqlite3PagerSetJournalMode(pPager, eNew);
         }
@@ -94461,11 +94497,10 @@ SQLITE_PRIVATE int sqlite3ExprImpliesExpr(Expr *pE1, Expr *pE2, int iTab){
   ){
     return 1;
   }
-  if( pE2->op==TK_NOTNULL
-   && sqlite3ExprCompare(pE1->pLeft, pE2->pLeft, iTab)==0
-   && (pE1->op!=TK_ISNULL && pE1->op!=TK_IS)
-  ){
-    return 1;
+  if( pE2->op==TK_NOTNULL && pE1->op!=TK_ISNULL && pE1->op!=TK_IS ){
+    Expr *pX = sqlite3ExprSkipCollate(pE1->pLeft);
+    testcase( pX!=pE1->pLeft );
+    if( sqlite3ExprCompare(pX, pE2->pLeft, iTab)==0 ) return 1;
   }
   return 0;
 }
@@ -122547,7 +122582,7 @@ SQLITE_PRIVATE int sqlite3RunVacuum(char **pzErrMsg, sqlite3 *db, int iDb){
 
   sqlite3BtreeSetCacheSize(pTemp, db->aDb[iDb].pSchema->cache_size);
   sqlite3BtreeSetSpillSize(pTemp, sqlite3BtreeSetSpillSize(pMain,0));
-  sqlite3BtreeSetPagerFlags(pTemp, PAGER_SYNCHRONOUS_OFF);
+  sqlite3BtreeSetPagerFlags(pTemp, PAGER_SYNCHRONOUS_OFF|PAGER_CACHESPILL);
 
   /* Begin a transaction and take an exclusive lock on the main database
   ** file. This is done before the sqlite3BtreeGetPageSize(pMain) call below,
@@ -127731,6 +127766,7 @@ static void exprAnalyze(
       Expr *pRight = sqlite3ExprForVectorField(pParse, pExpr->pRight, i);
 
       pNew = sqlite3PExpr(pParse, pExpr->op, pLeft, pRight, 0);
+      transferJoinMarkings(pNew, pExpr);
       idxNew = whereClauseInsert(pWC, pNew, TERM_DYNAMIC);
       exprAnalyze(pSrc, pWC, idxNew);
     }
@@ -132834,13 +132870,15 @@ SQLITE_PRIVATE void sqlite3WhereEnd(WhereInfo *pWInfo){
     }
 #endif
     if( pLevel->iLeftJoin ){
+      int ws = pLoop->wsFlags;
       addr = sqlite3VdbeAddOp1(v, OP_IfPos, pLevel->iLeftJoin); VdbeCoverage(v);
-      assert( (pLoop->wsFlags & WHERE_IDX_ONLY)==0
-           || (pLoop->wsFlags & WHERE_INDEXED)!=0 );
-      if( (pLoop->wsFlags & WHERE_IDX_ONLY)==0 ){
+      assert( (ws & WHERE_IDX_ONLY)==0 || (ws & WHERE_INDEXED)!=0 );
+      if( (ws & WHERE_IDX_ONLY)==0 ){
         sqlite3VdbeAddOp1(v, OP_NullRow, pTabList->a[i].iCursor);
       }
-      if( pLoop->wsFlags & WHERE_INDEXED ){
+      if( (ws & WHERE_INDEXED) 
+       || ((ws & WHERE_MULTI_OR) && pLevel->u.pCovidx) 
+      ){
         sqlite3VdbeAddOp1(v, OP_NullRow, pLevel->iIdxCur);
       }
       if( pLevel->op==OP_Return ){
@@ -138830,6 +138868,7 @@ SQLITE_API int sqlite3_db_config(sqlite3 *db, int op, ...){
         { SQLITE_DBCONFIG_ENABLE_TRIGGER,        SQLITE_EnableTrigger  },
         { SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER, SQLITE_Fts3Tokenizer  },
         { SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, SQLITE_LoadExtension  },
+        { 1006,                                  SQLITE_NoCkptOnClose  },
       };
       unsigned int i;
       rc = SQLITE_ERROR; /* IMP: R-42790-23372 */
@@ -165469,7 +165508,7 @@ static void icuRegexpFunc(sqlite3_context *p, int nArg, sqlite3_value **apArg){
 ** of upper() or lower().
 **
 **     lower('I', 'en_us') -> 'i'
-**     lower('I', 'tr_tr') -> 'ı' (small dotless i)
+**     lower('I', 'tr_tr') -> '\u131' (small dotless i)
 **
 ** http://www.icu-project.org/userguide/posix.html#case_mappings
 */
@@ -195858,7 +195897,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2016-10-14 10:20:30 707875582fcba352b4906a595ad89198d84711d8", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2016-11-04 12:08:49 1136863c76576110e710dd5d69ab6bf347c65e36", -1, SQLITE_TRANSIENT);
 }
 
 static int fts5Init(sqlite3 *db){
