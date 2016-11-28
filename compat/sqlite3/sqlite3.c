@@ -384,7 +384,7 @@ extern "C" {
 */
 #define SQLITE_VERSION        "3.15.2"
 #define SQLITE_VERSION_NUMBER 3015002
-#define SQLITE_SOURCE_ID      "2016-11-24 13:42:48 e31d646a319e03587a913d8e23e8c9f767a3481e"
+#define SQLITE_SOURCE_ID      "2016-11-28 19:13:37 bbd85d235f7037c6a033a9690534391ffeacecc8"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -195935,7 +195935,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2016-11-24 13:42:48 e31d646a319e03587a913d8e23e8c9f767a3481e", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2016-11-28 19:13:37 bbd85d235f7037c6a033a9690534391ffeacecc8", -1, SQLITE_TRANSIENT);
 }
 
 static int fts5Init(sqlite3 *db){
