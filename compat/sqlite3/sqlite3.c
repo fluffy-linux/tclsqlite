@@ -2396,6 +2396,8 @@ SQLITE_API sqlite3_int64 sqlite3_last_insert_rowid(sqlite3*);
 ** is unpredictable and not meaningful.
 */
 SQLITE_API sqlite3_uint64 sqlite3_changes(sqlite3*);
+#define sqlite3_changes(db) ((int)(sqlite3_changes)(db))
+#define sqlite3_changes64(db) ((sqlite3_changes)(db))
 
 /*
 ** CAPI3REF: Total Number Of Rows Modified
@@ -2420,6 +2422,8 @@ SQLITE_API sqlite3_uint64 sqlite3_changes(sqlite3*);
 ** returned is unpredictable and not meaningful.
 */
 SQLITE_API sqlite3_uint64 sqlite3_total_changes(sqlite3*);
+#define sqlite3_total_changes(db) ((int)(sqlite3_total_changes)(db))
+#define sqlite3_total_changes64(db) ((sqlite3_total_changes)(db))
 
 /*
 ** CAPI3REF: Interrupt A Long-Running Query
@@ -110950,7 +110954,10 @@ typedef int (*sqlite3_loadext_entry)(
 #define sqlite3_bind_value             sqlite3_api->bind_value
 #define sqlite3_busy_handler           sqlite3_api->busy_handler
 #define sqlite3_busy_timeout           sqlite3_api->busy_timeout
-#define sqlite3_changes                sqlite3_api->changes
+#undef sqlite3_changes
+#define sqlite3_changes                (int)sqlite3_api->changes
+#undef sqlite3_changes64
+#define sqlite3_changes64              sqlite3_api->changes
 #define sqlite3_close                  sqlite3_api->close
 #define sqlite3_collation_needed       sqlite3_api->collation_needed
 #define sqlite3_collation_needed16     sqlite3_api->collation_needed16
@@ -111039,7 +111046,10 @@ typedef int (*sqlite3_loadext_entry)(
 #define sqlite3_step                   sqlite3_api->step
 #define sqlite3_table_column_metadata  sqlite3_api->table_column_metadata
 #define sqlite3_thread_cleanup         sqlite3_api->thread_cleanup
-#define sqlite3_total_changes          sqlite3_api->total_changes
+#undef sqlite3_total_changes
+#define sqlite3_total_changes          (int)sqlite3_api->total_changes
+#undef sqlite3_total_changes64
+#define sqlite3_total_changes64        sqlite3_api->total_changes
 #define sqlite3_trace                  sqlite3_api->trace
 #ifndef SQLITE_OMIT_DEPRECATED
 #define sqlite3_transfer_bindings      sqlite3_api->transfer_bindings
@@ -140181,6 +140191,7 @@ SQLITE_API sqlite_int64 sqlite3_last_insert_rowid(sqlite3 *db){
 /*
 ** Return the number of changes in the most recent call to sqlite3_exec().
 */
+#undef sqlite3_changes
 SQLITE_API u64 sqlite3_changes(sqlite3 *db){
 #ifdef SQLITE_ENABLE_API_ARMOR
   if( !sqlite3SafetyCheckOk(db) ){
@@ -140194,6 +140205,7 @@ SQLITE_API u64 sqlite3_changes(sqlite3 *db){
 /*
 ** Return the number of changes since the database handle was opened.
 */
+#undef sqlite3_total_changes
 SQLITE_API u64 sqlite3_total_changes(sqlite3 *db){
 #ifdef SQLITE_ENABLE_API_ARMOR
   if( !sqlite3SafetyCheckOk(db) ){
