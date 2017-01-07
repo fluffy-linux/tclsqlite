@@ -392,7 +392,7 @@ extern "C" {
 */
 #define SQLITE_VERSION        "3.16.2"
 #define SQLITE_VERSION_NUMBER 3016002
-#define SQLITE_SOURCE_ID      "2017-01-03 18:27:03 979f04392853b8053817a3eea2fc679947b437fd"
+#define SQLITE_SOURCE_ID      "2017-01-06 16:32:41 a65a62893ca8319e89e48b8a38cf8a59c69a8209"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -4167,8 +4167,12 @@ SQLITE_API int sqlite3_clear_bindings(sqlite3_stmt*);
 ** METHOD: sqlite3_stmt
 **
 ** ^Return the number of columns in the result set returned by the
-** [prepared statement]. ^This routine returns 0 if pStmt is an SQL
-** statement that does not return data (for example an [UPDATE]).
+** [prepared statement]. ^If this routine returns 0, that means the 
+** [prepared statement] returns no data (for example an [UPDATE]).
+** ^However, just because this routine returns a positive number does not
+** mean that one or more rows of data will be returned.  ^A SELECT statement
+** will always have a positive sqlite3_column_count() but depending on the
+** WHERE clause constraints and the table content, it might return no rows.
 **
 ** See also: [sqlite3_data_count()]
 */
@@ -112188,7 +112192,7 @@ static const PragmaName aPragmaName[] = {
 #endif
  {/* zName:     */ "case_sensitive_like",
   /* ePragTyp:  */ PragTyp_CASE_SENSITIVE_LIKE,
-  /* ePragFlg:  */ 0,
+  /* ePragFlg:  */ PragFlg_NoColumns,
   /* ColNames:  */ 0, 0,
   /* iArg:      */ 0 },
  {/* zName:     */ "cell_size_check",
@@ -112506,7 +112510,7 @@ static const PragmaName aPragmaName[] = {
 #endif
  {/* zName:     */ "shrink_memory",
   /* ePragTyp:  */ PragTyp_SHRINK_MEMORY,
-  /* ePragFlg:  */ 0,
+  /* ePragFlg:  */ PragFlg_NoColumns,
   /* ColNames:  */ 0, 0,
   /* iArg:      */ 0 },
  {/* zName:     */ "soft_heap_limit",
@@ -190099,7 +190103,7 @@ static void fts5SegIterNext(
       else if( pLeaf->nn>pLeaf->szLeaf ){
         pIter->iPgidxOff = pLeaf->szLeaf + fts5GetVarint32(
             &pLeaf->p[pLeaf->szLeaf], iOff
-            );
+        );
         pIter->iLeafOffset = iOff;
         pIter->iEndofDoclist = iOff;
         bNewTerm = 1;
@@ -190133,6 +190137,7 @@ static void fts5SegIterNext(
       */
       int nSz;
       assert( p->rc==SQLITE_OK );
+      assert( pIter->iLeafOffset<=pIter->pLeaf->nn );
       fts5FastGetVarint32(pIter->pLeaf->p, pIter->iLeafOffset, nSz);
       pIter->bDel = (nSz & 0x0001);
       pIter->nPos = nSz>>1;
@@ -191127,7 +191132,7 @@ static void fts5ChunkIterate(
       break;
     }else{
       pgno++;
-      pData = fts5DataRead(p, FTS5_SEGMENT_ROWID(pSeg->pSeg->iSegid, pgno));
+      pData = fts5LeafRead(p, FTS5_SEGMENT_ROWID(pSeg->pSeg->iSegid, pgno));
       if( pData==0 ) break;
       pChunk = &pData->p[4];
       nChunk = MIN(nRem, pData->szLeaf - 4);
@@ -193886,7 +193891,7 @@ static void fts5IndexIntegrityCheckSegment(
     ** ignore this b-tree entry. Otherwise, load it into memory. */
     if( iIdxLeaf<pSeg->pgnoFirst ) continue;
     iRow = FTS5_SEGMENT_ROWID(pSeg->iSegid, iIdxLeaf);
-    pLeaf = fts5DataRead(p, iRow);
+    pLeaf = fts5LeafRead(p, iRow);
     if( pLeaf==0 ) break;
 
     /* Check that the leaf contains at least one term, and that it is equal
@@ -197164,7 +197169,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2017-01-03 18:27:03 979f04392853b8053817a3eea2fc679947b437fd", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2017-01-06 16:32:41 a65a62893ca8319e89e48b8a38cf8a59c69a8209", -1, SQLITE_TRANSIENT);
 }
 
 static int fts5Init(sqlite3 *db){
