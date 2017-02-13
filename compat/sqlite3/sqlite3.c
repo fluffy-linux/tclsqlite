@@ -400,7 +400,7 @@ extern "C" {
 */
 #define SQLITE_VERSION        "3.17.0"
 #define SQLITE_VERSION_NUMBER 3017000
-#define SQLITE_SOURCE_ID      "2017-01-06 16:32:41 a65a62893ca8319e89e48b8a38cf8a59c69a8209"
+#define SQLITE_SOURCE_ID      "2017-02-13 16:02:40 ada05cfa86ad7f5645450ac7a2a21c9aa6e57d2c"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -23900,7 +23900,7 @@ SQLITE_PRIVATE void sqlite3MemoryBarrier(void){
   SQLITE_MEMORY_BARRIER;
 #elif defined(__GNUC__)
   __sync_synchronize();
-#elif MSCV_VERSION>=1300
+#elif MSVC_VERSION>=1300
   _ReadWriteBarrier();
 #elif defined(MemoryBarrier)
   MemoryBarrier();
@@ -58711,7 +58711,7 @@ struct IntegrityCk {
 # define get2byteAligned(x)  (*(u16*)(x))
 #elif SQLITE_BYTEORDER==1234 && GCC_VERSION>=4008000
 # define get2byteAligned(x)  __builtin_bswap16(*(u16*)(x))
-#elif SQLITE_BYTEORDER==1234 && MSCV_VERSION>=1300
+#elif SQLITE_BYTEORDER==1234 && MSVC_VERSION>=1300
 # define get2byteAligned(x)  _byteswap_ushort(*(u16*)(x))
 #else
 # define get2byteAligned(x)  ((x)[0]<<8 | (x)[1])
@@ -90871,7 +90871,7 @@ static char comparisonAffinity(Expr *pExpr){
     aff = sqlite3CompareAffinity(pExpr->pRight, aff);
   }else if( ExprHasProperty(pExpr, EP_xIsSelect) ){
     aff = sqlite3CompareAffinity(pExpr->x.pSelect->pEList->a[0].pExpr, aff);
-  }else if( NEVER(aff==0) ){
+  }else if( aff==0 ){
     aff = SQLITE_AFF_BLOB;
   }
   return aff;
@@ -129842,6 +129842,7 @@ static WhereTerm *whereScanInit(
     iColumn = pIdx->aiColumn[j];
     if( iColumn==XN_EXPR ){
       pScan->pIdxExpr = pIdx->aColExpr->a[j].pExpr;
+      pScan->zCollName = pIdx->azColl[j];
     }else if( iColumn==pIdx->pTable->iPKey ){
       iColumn = XN_ROWID;
     }else if( iColumn>=0 ){
@@ -197810,7 +197811,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2017-01-06 16:32:41 a65a62893ca8319e89e48b8a38cf8a59c69a8209", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2017-02-13 16:02:40 ada05cfa86ad7f5645450ac7a2a21c9aa6e57d2c", -1, SQLITE_TRANSIENT);
 }
 
 static int fts5Init(sqlite3 *db){
