@@ -401,7 +401,7 @@ extern "C" {
 */
 #define SQLITE_VERSION        "3.18.0"
 #define SQLITE_VERSION_NUMBER 3018000
-#define SQLITE_SOURCE_ID      "2017-03-07 20:03:25 961e79da73b4550b3e5b0f9a617133a76485db67"
+#define SQLITE_SOURCE_ID      "2017-03-28 18:48:43 424a0d380332858ee55bdebc4af3789f74e70a2b3ba1cf29d84b9b4bcf3e2e37"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -38396,7 +38396,7 @@ static struct win_syscall {
   { "FileTimeToLocalFileTime", (SYSCALL)0,                       0 },
 #endif
 
-#define osFileTimeToLocalFileTime ((BOOL(WINAPI*)(const FILETIME*, \
+#define osFileTimeToLocalFileTime ((BOOL(WINAPI*)(CONST FILETIME*, \
         LPFILETIME))aSyscall[11].pCurrent)
 
 #if SQLITE_OS_WINCE
@@ -38405,7 +38405,7 @@ static struct win_syscall {
   { "FileTimeToSystemTime",    (SYSCALL)0,                       0 },
 #endif
 
-#define osFileTimeToSystemTime ((BOOL(WINAPI*)(const FILETIME*, \
+#define osFileTimeToSystemTime ((BOOL(WINAPI*)(CONST FILETIME*, \
         LPSYSTEMTIME))aSyscall[12].pCurrent)
 
   { "FlushFileBuffers",        (SYSCALL)FlushFileBuffers,        0 },
@@ -38743,7 +38743,7 @@ static struct win_syscall {
 
   { "SystemTimeToFileTime",    (SYSCALL)SystemTimeToFileTime,    0 },
 
-#define osSystemTimeToFileTime ((BOOL(WINAPI*)(const SYSTEMTIME*, \
+#define osSystemTimeToFileTime ((BOOL(WINAPI*)(CONST SYSTEMTIME*, \
         LPFILETIME))aSyscall[56].pCurrent)
 
 #if !SQLITE_OS_WINCE && !SQLITE_OS_WINRT
@@ -39375,7 +39375,7 @@ static int winMemInit(void *pAppData){
                                       dwInitialSize, dwMaximumSize);
     if( !pWinMemData->hHeap ){
       sqlite3_log(SQLITE_NOMEM,
-          "failed to HeapCreate (%lu), flags=%lu, initSize=%lu, maxSize=%u",
+          "failed to HeapCreate (%lu), flags=%u, initSize=%lu, maxSize=%lu",
           osGetLastError(), SQLITE_WIN32_HEAP_FLAGS, dwInitialSize,
           dwMaximumSize);
       return SQLITE_NOMEM_BKPT;
@@ -198527,7 +198527,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2017-03-07 20:03:25 961e79da73b4550b3e5b0f9a617133a76485db67", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2017-03-28 18:48:43 424a0d380332858ee55bdebc4af3789f74e70a2b3ba1cf29d84b9b4bcf3e2e37", -1, SQLITE_TRANSIENT);
 }
 
 static int fts5Init(sqlite3 *db){
@@ -201158,7 +201158,7 @@ static int sqlite3Fts5UnicodeIsalnum(int c){
   };
 
   if( (unsigned int)c<128 ){
-    return ( (aAscii[c >> 5] & (1 << (c & 0x001F)))==0 );
+    return ( (aAscii[c >> 5] & ((unsigned int)1 << (c & 0x001F)))==0 );
   }else if( (unsigned int)c<(1<<22) ){
     unsigned int key = (((unsigned int)c)<<10) | 0x000003FF;
     int iRes = 0;
