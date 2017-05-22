@@ -401,7 +401,7 @@ extern "C" {
 */
 #define SQLITE_VERSION        "3.19.0"
 #define SQLITE_VERSION_NUMBER 3019000
-#define SQLITE_SOURCE_ID      "2017-03-28 18:48:43 424a0d380332858ee55bdebc4af3789f74e70a2b3ba1cf29d84b9b4bcf3e2e37"
+#define SQLITE_SOURCE_ID      "2017-05-22 13:58:13 28a94eb282822cad1d1420f2dad6bf65e4b8b9062eda4a0b9ee8270b2c608e40"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -9694,7 +9694,7 @@ typedef struct sqlite3_changegroup sqlite3_changegroup;
 ** sqlite3changegroup_output() functions, also available are the streaming
 ** versions sqlite3changegroup_add_strm() and sqlite3changegroup_output_strm().
 */
-int sqlite3changegroup_new(sqlite3_changegroup **pp);
+SQLITE_API int sqlite3changegroup_new(sqlite3_changegroup **pp);
 
 /*
 ** CAPI3REF: Add A Changeset To A Changegroup
@@ -9771,7 +9771,7 @@ int sqlite3changegroup_new(sqlite3_changegroup **pp);
 **
 ** If no error occurs, SQLITE_OK is returned.
 */
-int sqlite3changegroup_add(sqlite3_changegroup*, int nData, void *pData);
+SQLITE_API int sqlite3changegroup_add(sqlite3_changegroup*, int nData, void *pData);
 
 /*
 ** CAPI3REF: Obtain A Composite Changeset From A Changegroup
@@ -9797,7 +9797,7 @@ int sqlite3changegroup_add(sqlite3_changegroup*, int nData, void *pData);
 ** responsibility of the caller to eventually free the buffer using a
 ** call to sqlite3_free().
 */
-int sqlite3changegroup_output(
+SQLITE_API int sqlite3changegroup_output(
   sqlite3_changegroup*,
   int *pnData,                    /* OUT: Size of output buffer in bytes */
   void **ppData                   /* OUT: Pointer to output buffer */
@@ -9806,7 +9806,7 @@ int sqlite3changegroup_output(
 /*
 ** CAPI3REF: Delete A Changegroup Object
 */
-void sqlite3changegroup_delete(sqlite3_changegroup*);
+SQLITE_API void sqlite3changegroup_delete(sqlite3_changegroup*);
 
 /*
 ** CAPI3REF: Apply A Changeset To A Database
@@ -10195,11 +10195,11 @@ SQLITE_API int sqlite3session_patchset_strm(
   int (*xOutput)(void *pOut, const void *pData, int nData),
   void *pOut
 );
-int sqlite3changegroup_add_strm(sqlite3_changegroup*, 
+SQLITE_API int sqlite3changegroup_add_strm(sqlite3_changegroup*, 
     int (*xInput)(void *pIn, void *pData, int *pnData),
     void *pIn
 );
-int sqlite3changegroup_output_strm(sqlite3_changegroup*,
+SQLITE_API int sqlite3changegroup_output_strm(sqlite3_changegroup*,
     int (*xOutput)(void *pOut, const void *pData, int nData), 
     void *pOut
 );
@@ -82575,10 +82575,12 @@ case OP_Found: {        /* jump, in3 */
     pIdxKey = &r;
     pFree = 0;
   }else{
+    assert( pIn3->flags & MEM_Blob );
+    rc = ExpandBlob(pIn3);
+    assert( rc==SQLITE_OK || rc==SQLITE_NOMEM );
+    if( rc ) goto no_mem;
     pFree = pIdxKey = sqlite3VdbeAllocUnpackedRecord(pC->pKeyInfo);
     if( pIdxKey==0 ) goto no_mem;
-    assert( pIn3->flags & MEM_Blob );
-    (void)ExpandBlob(pIn3);
     sqlite3VdbeRecordUnpack(pC->pKeyInfo, pIn3->n, pIn3->z, pIdxKey);
   }
   pIdxKey->default_rc = 0;
@@ -91426,7 +91428,6 @@ SQLITE_PRIVATE int sqlite3ExprVectorSize(Expr *pExpr){
   }
 }
 
-#ifndef SQLITE_OMIT_SUBQUERY
 /*
 ** Return a pointer to a subexpression of pVector that is the i-th
 ** column of the vector (numbered starting with 0).  The caller must
@@ -91454,9 +91455,7 @@ SQLITE_PRIVATE Expr *sqlite3VectorFieldSubexpr(Expr *pVector, int i){
   }
   return pVector;
 }
-#endif /* !defined(SQLITE_OMIT_SUBQUERY) */
 
-#ifndef SQLITE_OMIT_SUBQUERY
 /*
 ** Compute and return a new Expr object which when passed to
 ** sqlite3ExprCode() will generate all necessary code to compute
@@ -91514,7 +91513,6 @@ SQLITE_PRIVATE Expr *sqlite3ExprForVectorField(
   }
   return pRet;
 }
-#endif /* !define(SQLITE_OMIT_SUBQUERY) */
 
 /*
 ** If expression pExpr is of type TK_SELECT, generate code to evaluate
@@ -94485,7 +94483,11 @@ static int exprCodeVector(Parse *pParse, Expr *p, int *piFreeable){
   }else{
     *piFreeable = 0;
     if( p->op==TK_SELECT ){
+#if SQLITE_OMIT_SUBQUERY
+      iResult = 0;
+#else
       iResult = sqlite3CodeSubselect(pParse, p, 0, 0);
+#endif
     }else{
       int i;
       iResult = pParse->nMem+1;
@@ -185554,9 +185556,11 @@ static void sqlite3Fts5BufferAppendBlob(
   const u8 *pData
 ){
   assert_nc( *pRc || nData>=0 );
-  if( fts5BufferGrow(pRc, pBuf, nData) ) return;
-  memcpy(&pBuf->p[pBuf->n], pData, nData);
-  pBuf->n += nData;
+  if( nData ){
+    if( fts5BufferGrow(pRc, pBuf, nData) ) return;
+    memcpy(&pBuf->p[pBuf->n], pData, nData);
+    pBuf->n += nData;
+  }
 }
 
 /*
@@ -185733,8 +185737,8 @@ static void *sqlite3Fts5MallocZero(int *pRc, size_t nByte){
   void *pRet = 0;
   if( *pRc==SQLITE_OK ){
     pRet = sqlite3_malloc(nByte);
-    if( pRet==0 && nByte>0 ){
-      *pRc = SQLITE_NOMEM;
+    if( pRet==0 ){
+      if( nByte>0 ) *pRc = SQLITE_NOMEM;
     }else{
       memset(pRet, 0, nByte);
     }
@@ -189695,9 +189699,10 @@ struct Fts5Hash {
 
 /*
 ** Each entry in the hash table is represented by an object of the 
-** following type. Each object, its key (zKey[]) and its current data
-** are stored in a single memory allocation. The position list data 
-** immediately follows the key data in memory.
+** following type. Each object, its key (a nul-terminated string) and 
+** its current data are stored in a single memory allocation. The 
+** key immediately follows the object in memory. The position list
+** data immediately follows the key data in memory.
 **
 ** The data that follows the key is in a similar, but not identical format
 ** to the doclist data stored in the database. It is:
@@ -189721,20 +189726,20 @@ struct Fts5HashEntry {
   int nAlloc;                     /* Total size of allocation */
   int iSzPoslist;                 /* Offset of space for 4-byte poslist size */
   int nData;                      /* Total bytes of data (incl. structure) */
-  int nKey;                       /* Length of zKey[] in bytes */
+  int nKey;                       /* Length of key in bytes */
   u8 bDel;                        /* Set delete-flag @ iSzPoslist */
   u8 bContent;                    /* Set content-flag (detail=none mode) */
   i16 iCol;                       /* Column of last value written */
   int iPos;                       /* Position of last value written */
   i64 iRowid;                     /* Rowid of last value written */
-  char zKey[8];                   /* Nul-terminated entry key */
 };
 
 /*
-** Size of Fts5HashEntry without the zKey[] array.
+** Eqivalent to:
+**
+**   char *fts5EntryKey(Fts5HashEntry *pEntry){ return zKey; }
 */
-#define FTS5_HASHENTRYSIZE (sizeof(Fts5HashEntry)-8)
-
+#define fts5EntryKey(p) ( ((char *)(&(p)[1])) )
 
 
 /*
@@ -189832,7 +189837,7 @@ static int fts5HashResize(Fts5Hash *pHash){
       int iHash;
       Fts5HashEntry *p = apOld[i];
       apOld[i] = p->pHashNext;
-      iHash = fts5HashKey(nNew, (u8*)p->zKey, (int)strlen(p->zKey));
+      iHash = fts5HashKey(nNew, (u8*)fts5EntryKey(p), strlen(fts5EntryKey(p)));
       p->pHashNext = apNew[iHash];
       apNew[iHash] = p;
     }
@@ -189903,9 +189908,10 @@ static int sqlite3Fts5HashWrite(
   /* Attempt to locate an existing hash entry */
   iHash = fts5HashKey2(pHash->nSlot, (u8)bByte, (const u8*)pToken, nToken);
   for(p=pHash->aSlot[iHash]; p; p=p->pHashNext){
-    if( p->zKey[0]==bByte 
+    char *zKey = fts5EntryKey(p);
+    if( zKey[0]==bByte 
      && p->nKey==nToken
-     && memcmp(&p->zKey[1], pToken, nToken)==0 
+     && memcmp(&zKey[1], pToken, nToken)==0 
     ){
       break;
     }
@@ -189914,7 +189920,8 @@ static int sqlite3Fts5HashWrite(
   /* If an existing hash entry cannot be found, create a new one. */
   if( p==0 ){
     /* Figure out how much space to allocate */
-    int nByte = FTS5_HASHENTRYSIZE + (nToken+1) + 1 + 64;
+    char *zKey;
+    int nByte = sizeof(Fts5HashEntry) + (nToken+1) + 1 + 64;
     if( nByte<128 ) nByte = 128;
 
     /* Grow the Fts5Hash.aSlot[] array if necessary. */
@@ -189927,14 +189934,15 @@ static int sqlite3Fts5HashWrite(
     /* Allocate new Fts5HashEntry and add it to the hash table. */
     p = (Fts5HashEntry*)sqlite3_malloc(nByte);
     if( !p ) return SQLITE_NOMEM;
-    memset(p, 0, FTS5_HASHENTRYSIZE);
+    memset(p, 0, sizeof(Fts5HashEntry));
     p->nAlloc = nByte;
-    p->zKey[0] = bByte;
-    memcpy(&p->zKey[1], pToken, nToken);
-    assert( iHash==fts5HashKey(pHash->nSlot, (u8*)p->zKey, nToken+1) );
+    zKey = fts5EntryKey(p);
+    zKey[0] = bByte;
+    memcpy(&zKey[1], pToken, nToken);
+    assert( iHash==fts5HashKey(pHash->nSlot, (u8*)zKey, nToken+1) );
     p->nKey = nToken;
-    p->zKey[nToken+1] = '\0';
-    p->nData = nToken+1 + 1 + FTS5_HASHENTRYSIZE;
+    zKey[nToken+1] = '\0';
+    p->nData = nToken+1 + 1 + sizeof(Fts5HashEntry);
     p->pHashNext = pHash->aSlot[iHash];
     pHash->aSlot[iHash] = p;
     pHash->nEntry++;
@@ -190052,9 +190060,11 @@ static Fts5HashEntry *fts5HashEntryMerge(
       p1 = 0;
     }else{
       int i = 0;
-      while( p1->zKey[i]==p2->zKey[i] ) i++;
+      char *zKey1 = fts5EntryKey(p1);
+      char *zKey2 = fts5EntryKey(p2);
+      while( zKey1[i]==zKey2[i] ) i++;
 
-      if( ((u8)p1->zKey[i])>((u8)p2->zKey[i]) ){
+      if( ((u8)zKey1[i])>((u8)zKey2[i]) ){
         /* p2 is smaller */
         *ppOut = p2;
         ppOut = &p2->pScanNext;
@@ -190097,7 +190107,7 @@ static int fts5HashEntrySort(
   for(iSlot=0; iSlot<pHash->nSlot; iSlot++){
     Fts5HashEntry *pIter;
     for(pIter=pHash->aSlot[iSlot]; pIter; pIter=pIter->pHashNext){
-      if( pTerm==0 || 0==memcmp(pIter->zKey, pTerm, nTerm) ){
+      if( pTerm==0 || 0==memcmp(fts5EntryKey(pIter), pTerm, nTerm) ){
         Fts5HashEntry *pEntry = pIter;
         pEntry->pScanNext = 0;
         for(i=0; ap[i]; i++){
@@ -190130,16 +190140,18 @@ static int sqlite3Fts5HashQuery(
   int *pnDoclist                  /* OUT: Size of doclist in bytes */
 ){
   unsigned int iHash = fts5HashKey(pHash->nSlot, (const u8*)pTerm, nTerm);
+  char *zKey;
   Fts5HashEntry *p;
 
   for(p=pHash->aSlot[iHash]; p; p=p->pHashNext){
-    if( memcmp(p->zKey, pTerm, nTerm)==0 && p->zKey[nTerm]==0 ) break;
+    zKey = fts5EntryKey(p);
+    if( memcmp(zKey, pTerm, nTerm)==0 && zKey[nTerm]==0 ) break;
   }
 
   if( p ){
     fts5HashAddPoslistSize(pHash, p);
-    *ppDoclist = (const u8*)&p->zKey[nTerm+1];
-    *pnDoclist = p->nData - (FTS5_HASHENTRYSIZE + nTerm + 1);
+    *ppDoclist = (const u8*)&zKey[nTerm+1];
+    *pnDoclist = p->nData - (sizeof(Fts5HashEntry) + nTerm + 1);
   }else{
     *ppDoclist = 0;
     *pnDoclist = 0;
@@ -190172,11 +190184,12 @@ static void sqlite3Fts5HashScanEntry(
 ){
   Fts5HashEntry *p;
   if( (p = pHash->pScan) ){
-    int nTerm = (int)strlen(p->zKey);
+    char *zKey = fts5EntryKey(p);
+    int nTerm = (int)strlen(zKey);
     fts5HashAddPoslistSize(pHash, p);
-    *pzTerm = p->zKey;
-    *ppDoclist = (const u8*)&p->zKey[nTerm+1];
-    *pnDoclist = p->nData - (FTS5_HASHENTRYSIZE + nTerm + 1);
+    *pzTerm = zKey;
+    *ppDoclist = (const u8*)&zKey[nTerm+1];
+    *pnDoclist = p->nData - (sizeof(Fts5HashEntry) + nTerm + 1);
   }else{
     *pzTerm = 0;
     *ppDoclist = 0;
@@ -195280,7 +195293,7 @@ static void fts5SetupPrefixIter(
     if( pData ){
       pData->p = (u8*)&pData[1];
       pData->nn = pData->szLeaf = doclist.n;
-      memcpy(pData->p, doclist.p, doclist.n);
+      if( doclist.n ) memcpy(pData->p, doclist.p, doclist.n);
       fts5MultiIterNew2(p, pData, bDesc, ppIter);
     }
     fts5BufferFree(&doclist);
@@ -195519,7 +195532,7 @@ static int sqlite3Fts5IndexQuery(
 
   if( sqlite3Fts5BufferSize(&p->rc, &buf, nToken+1)==0 ){
     int iIdx = 0;                 /* Index to search */
-    memcpy(&buf.p[1], pToken, nToken);
+    if( nToken ) memcpy(&buf.p[1], pToken, nToken);
 
     /* Figure out which index to search and set iIdx accordingly. If this
     ** is a prefix query for which there is no prefix index, set iIdx to
@@ -195568,7 +195581,7 @@ static int sqlite3Fts5IndexQuery(
     }
 
     if( p->rc ){
-      sqlite3Fts5IterClose(&pRet->base);
+      sqlite3Fts5IterClose((Fts5IndexIter*)pRet);
       pRet = 0;
       fts5CloseReader(p);
     }
@@ -199310,7 +199323,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2017-03-28 18:48:43 424a0d380332858ee55bdebc4af3789f74e70a2b3ba1cf29d84b9b4bcf3e2e37", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2017-05-22 13:58:13 28a94eb282822cad1d1420f2dad6bf65e4b8b9062eda4a0b9ee8270b2c608e40", -1, SQLITE_TRANSIENT);
 }
 
 static int fts5Init(sqlite3 *db){
