@@ -6509,10 +6509,10 @@ fi
 
     STLIB_LD='${AR} cr'
     LD_LIBRARY_PATH_VAR="LD_LIBRARY_PATH"
-    if test "x$SHLIB_VERSION" = x; then :
-  SHLIB_VERSION=""
+    if test "x${SHLIB_VERSION}" = x; then :
+  SHLIB_VERSION=".1.0"
 else
-  SHLIB_VERSION=".$SHLIB_VERSION"
+  SHLIB_VERSION=".${SHLIB_VERSION}"
 fi
     case $system in
 	# TEA specific:
