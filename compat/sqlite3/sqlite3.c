@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.19.0.  By combining all the individual C code files into this
+** version 3.19.1.  By combining all the individual C code files into this
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -399,8 +399,8 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.19.0"
-#define SQLITE_VERSION_NUMBER 3019000
+#define SQLITE_VERSION        "3.19.1"
+#define SQLITE_VERSION_NUMBER 3019001
 #define SQLITE_SOURCE_ID      "2017-05-22 13:58:13 28a94eb282822cad1d1420f2dad6bf65e4b8b9062eda4a0b9ee8270b2c608e40"
 
 /*
@@ -80911,6 +80911,7 @@ case OP_NotNull: {            /* same as TK_NOTNULL, jump, in1 */
 */
 case OP_IfNullRow: {         /* jump */
   assert( pOp->p1>=0 && pOp->p1<p->nCursor );
+  assert( p->apCsr[pOp->p1]!=0 );
   if( p->apCsr[pOp->p1]->nullRow ){
     sqlite3VdbeMemSetNull(aMem + pOp->p3);
     goto jump_to_p2;
@@ -119939,6 +119940,8 @@ static Expr *substExpr(
         pExpr = pNew;
       }
     }
+  }else if( pExpr->op==TK_IF_NULL_ROW && pExpr->iTable==pSubst->iTable ){
+    pExpr->iTable = pSubst->iNewTable;
   }else{
     pExpr->pLeft = substExpr(pSubst, pExpr->pLeft);
     pExpr->pRight = substExpr(pSubst, pExpr->pRight);
@@ -143780,7 +143783,7 @@ opendb_out:
 #if defined(SQLITE_HAS_CODEC)
   if( rc==SQLITE_OK ){
     const char *zKey;
-    if( (zKey = sqlite3_uri_parameter(zOpen, "hexkey"))!=0 && zKey[0] ){;
+    if( (zKey = sqlite3_uri_parameter(zOpen, "hexkey"))!=0 && zKey[0] ){
       u8 iByte;
       int i;
       char zDecoded[40];
