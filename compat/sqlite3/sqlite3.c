@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.19.1.  By combining all the individual C code files into this
+** version 3.19.2.  By combining all the individual C code files into this
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -399,8 +399,8 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.19.1"
-#define SQLITE_VERSION_NUMBER 3019001
+#define SQLITE_VERSION        "3.19.2"
+#define SQLITE_VERSION_NUMBER 3019002
 #define SQLITE_SOURCE_ID      "2017-05-24 13:08:33 f6d7b988f40217821a382bc298180e9e6794f3ed79a83c6ef5cae048989b3f86"
 
 /*
@@ -92817,10 +92817,12 @@ static int exprNodeIsConstant(Walker *pWalker, Expr *pExpr){
       testcase( pExpr->op==TK_AGG_COLUMN );
       if( pWalker->eCode==3 && pExpr->iTable==pWalker->u.iCur ){
         return WRC_Continue;
-      }else{
-        pWalker->eCode = 0;
-        return WRC_Abort;
       }
+      /* Fall through */
+    case TK_IF_NULL_ROW:
+      testcase( pExpr->op==TK_IF_NULL_ROW );
+      pWalker->eCode = 0;
+      return WRC_Abort;
     case TK_VARIABLE:
       if( pWalker->eCode==5 ){
         /* Silently convert bound parameters that appear inside of CREATE
@@ -120238,6 +120240,14 @@ static int flattenSubquery(
       return 0; /* Restriction (3) */
     }
   }
+#ifdef SQLITE_EXTRA_IFNULLROW
+  else if( iFrom>0 && !isAgg ){
+    /* Setting isLeftJoin to -1 causes OP_IfNullRow opcodes to be generated for
+    ** every reference to any result column from subquery in a join, even though
+    ** they are not necessary.  This will stress-test the OP_IfNullRow opcode. */
+    isLeftJoin = -1;
+  }
+#endif
 
   /* Restriction 17: If the sub-query is a compound SELECT, then it must
   ** use only the UNION ALL operator. And none of the simple select queries
@@ -120491,7 +120501,7 @@ static int flattenSubquery(
       pSub->pOrderBy = 0;
     }
     pWhere = sqlite3ExprDup(db, pSub->pWhere, 0);
-    if( isLeftJoin ){
+    if( isLeftJoin>0 ){
       setJoinExpr(pWhere, iNewParent);
     }
     if( subqueryIsAgg ){
@@ -130501,11 +130511,11 @@ SQLITE_PRIVATE Bitmask sqlite3WhereExprUsage(WhereMaskSet *pMaskSet, Expr *p){
   Bitmask mask;
   if( p==0 ) return 0;
   if( p->op==TK_COLUMN ){
-    mask = sqlite3WhereGetMask(pMaskSet, p->iTable);
-    return mask;
+    return sqlite3WhereGetMask(pMaskSet, p->iTable);
   }
+  mask = (p->op==TK_IF_NULL_ROW) ? sqlite3WhereGetMask(pMaskSet, p->iTable) : 0;
   assert( !ExprHasProperty(p, EP_TokenOnly) );
-  mask = p->pRight ? sqlite3WhereExprUsage(pMaskSet, p->pRight) : 0;
+  if( p->pRight ) mask |= sqlite3WhereExprUsage(pMaskSet, p->pRight);
   if( p->pLeft ) mask |= sqlite3WhereExprUsage(pMaskSet, p->pLeft);
   if( ExprHasProperty(p, EP_xIsSelect) ){
     mask |= exprSelectUsage(pMaskSet, p->x.pSelect);
