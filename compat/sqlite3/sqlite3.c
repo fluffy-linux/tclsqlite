@@ -401,7 +401,7 @@ extern "C" {
 */
 #define SQLITE_VERSION        "3.19.1"
 #define SQLITE_VERSION_NUMBER 3019001
-#define SQLITE_SOURCE_ID      "2017-05-22 13:58:13 28a94eb282822cad1d1420f2dad6bf65e4b8b9062eda4a0b9ee8270b2c608e40"
+#define SQLITE_SOURCE_ID      "2017-05-24 13:08:33 f6d7b988f40217821a382bc298180e9e6794f3ed79a83c6ef5cae048989b3f86"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -119940,9 +119940,10 @@ static Expr *substExpr(
         pExpr = pNew;
       }
     }
-  }else if( pExpr->op==TK_IF_NULL_ROW && pExpr->iTable==pSubst->iTable ){
-    pExpr->iTable = pSubst->iNewTable;
   }else{
+    if( pExpr->op==TK_IF_NULL_ROW && pExpr->iTable==pSubst->iTable ){
+      pExpr->iTable = pSubst->iNewTable;
+    }
     pExpr->pLeft = substExpr(pSubst, pExpr->pLeft);
     pExpr->pRight = substExpr(pSubst, pExpr->pRight);
     if( ExprHasProperty(pExpr, EP_xIsSelect) ){
@@ -120027,7 +120028,8 @@ static void substSelect(
 **        due to ticket [2f7170d73bf9abf80] from 2015-02-09.)
 **
 **   (3)  The subquery is not the right operand of a LEFT JOIN
-**        or the subquery is not itself a join.
+**        or the subquery is not itself a join and the outer query is not
+**        an aggregate.
 **
 **   (4)  The subquery is not DISTINCT.
 **
@@ -120223,11 +120225,16 @@ static int flattenSubquery(
   **
   ** which is not at all the same thing.
   **
+  ** If the subquery is the right operand of a LEFT JOIN, then the outer
+  ** query cannot be an aggregate.  This is an artifact of the way aggregates
+  ** are processed - there is not mechanism to determine if the LEFT JOIN
+  ** table should be all-NULL.
+  **
   ** See also tickets #306, #350, and #3300.
   */
   if( (pSubitem->fg.jointype & JT_OUTER)!=0 ){
     isLeftJoin = 1;
-    if( pSubSrc->nSrc>1 ){
+    if( pSubSrc->nSrc>1 || isAgg ){
       return 0; /* Restriction (3) */
     }
   }
@@ -199326,7 +199333,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2017-05-22 13:58:13 28a94eb282822cad1d1420f2dad6bf65e4b8b9062eda4a0b9ee8270b2c608e40", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2017-05-24 13:08:33 f6d7b988f40217821a382bc298180e9e6794f3ed79a83c6ef5cae048989b3f86", -1, SQLITE_TRANSIENT);
 }
 
 static int fts5Init(sqlite3 *db){
