@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.19.2.  By combining all the individual C code files into this
+** version 3.19.3.  By combining all the individual C code files into this
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -399,8 +399,8 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.19.2"
-#define SQLITE_VERSION_NUMBER 3019002
+#define SQLITE_VERSION        "3.19.3"
+#define SQLITE_VERSION_NUMBER 3019003
 #define SQLITE_SOURCE_ID      "2017-05-25 16:50:27 edb4e819b0c058c7d74d27ebd14cc5ceb2bad6a6144a486a970182b7afe3f8b9"
 
 /*
@@ -67373,12 +67373,18 @@ SQLITE_PRIVATE int sqlite3BtreeInsert(
       memcpy(newCell, oldCell, 4);
     }
     rc = clearCell(pPage, oldCell, &info);
-    if( info.nSize==szNew && info.nLocal==info.nPayload ){
+    if( info.nSize==szNew && info.nLocal==info.nPayload 
+     && (!ISAUTOVACUUM || szNew<pPage->minLocal)
+    ){
       /* Overwrite the old cell with the new if they are the same size.
       ** We could also try to do this if the old cell is smaller, then add
       ** the leftover space to the free list.  But experiments show that
       ** doing that is no faster then skipping this optimization and just
-      ** calling dropCell() and insertCell(). */
+      ** calling dropCell() and insertCell(). 
+      **
+      ** This optimization cannot be used on an autovacuum database if the
+      ** new entry uses overflow pages, as the insertCell() call below is
+      ** necessary to add the PTRMAP_OVERFLOW1 pointer-map entry.  */
       assert( rc==SQLITE_OK ); /* clearCell never fails when nLocal==nPayload */
       if( oldCell+szNew > pPage->aDataEnd ) return SQLITE_CORRUPT_BKPT;
       memcpy(oldCell, newCell, szNew);
@@ -131790,7 +131796,7 @@ static int whereKeyStats(
       iGap = iGap/3;
     }
     aStat[0] = iLower + iGap;
-    aStat[1] = pIdx->aAvgEq[iCol];
+    aStat[1] = pIdx->aAvgEq[nField-1];
   }
 
   /* Restore the pRec->nField value before returning.  */
@@ -189854,10 +189860,11 @@ static int fts5HashResize(Fts5Hash *pHash){
 
   for(i=0; i<pHash->nSlot; i++){
     while( apOld[i] ){
-      int iHash;
+      unsigned int iHash;
       Fts5HashEntry *p = apOld[i];
       apOld[i] = p->pHashNext;
-      iHash = fts5HashKey(nNew, (u8*)fts5EntryKey(p), strlen(fts5EntryKey(p)));
+      iHash = fts5HashKey(nNew, (u8*)fts5EntryKey(p),
+                          (int)strlen(fts5EntryKey(p)));
       p->pHashNext = apNew[iHash];
       apNew[iHash] = p;
     }
@@ -190160,7 +190167,7 @@ static int sqlite3Fts5HashQuery(
   int *pnDoclist                  /* OUT: Size of doclist in bytes */
 ){
   unsigned int iHash = fts5HashKey(pHash->nSlot, (const u8*)pTerm, nTerm);
-  char *zKey;
+  char *zKey = 0;
   Fts5HashEntry *p;
 
   for(p=pHash->aSlot[iHash]; p; p=p->pHashNext){
