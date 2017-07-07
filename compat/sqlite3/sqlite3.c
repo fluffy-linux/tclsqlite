@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.19.4.  By combining all the individual C code files into this
+** version 3.19.3.  By combining all the individual C code files into this
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -41,6 +41,14 @@
 
 #ifndef SQLITE_OMIT_COMPILEOPTION_DIAGS
 
+/*
+** Include the configuration header output by 'configure' if we're using the
+** autoconf-based build
+*/
+#if defined(_HAVE_SQLITE_CONFIG_H) && !defined(SQLITECONFIG_H)
+#include "config.h"
+#define SQLITECONFIG_H 1
+#endif
 
 /* These macros are provided to "stringify" the value of the define
 ** for those options in which the value is meaningful. */
@@ -1134,8 +1142,8 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.19.4"
-#define SQLITE_VERSION_NUMBER 3019004
+#define SQLITE_VERSION        "3.19.3"
+#define SQLITE_VERSION_NUMBER 3019003
 #define SQLITE_SOURCE_ID      "2017-06-08 14:26:16 0ee482a1e0eae22e08edc8978c9733a96603d4509645f348ebf55b579e89636b"
 
 /*
@@ -3022,6 +3030,17 @@ struct sqlite3_mem_methods {
 ** have been disabled - 0 if they are not disabled, 1 if they are.
 ** </dd>
 **
+** <dt>SQLITE_DBCONFIG_ENABLE_QPSG</dt>
+** <dd>The SQLITE_DBCONFIG_ENABLE_QPSG option activates or deactivates
+** the [query planner stability guarantee] (QPSG).  When the QPSG is active,
+** a single SQL query statement will always use the same algorithm regardless
+** of values of [bound parameters].  The QPSG disables some query optimizations
+** that look at the values of bound parameters, which can make some queries
+** slower.  But the QPSG has the advantage of more predictable behavior.  With
+** the QPSG active, SQLite will always use the same query plan in the field as
+** was used during testing in the lab.
+** </dd>
+**
 ** </dl>
 */
 #define SQLITE_DBCONFIG_MAINDBNAME            1000 /* const char* */
@@ -3031,6 +3050,7 @@ struct sqlite3_mem_methods {
 #define SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER 1004 /* int int* */
 #define SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION 1005 /* int int* */
 #define SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE      1006 /* int int* */
+#define SQLITE_DBCONFIG_ENABLE_QPSG           1007 /* int int* */
 
 
 /*
@@ -4487,6 +4507,24 @@ SQLITE_API int sqlite3_limit(sqlite3*, int id, int newVal);
 #define SQLITE_LIMIT_TRIGGER_DEPTH            10
 #define SQLITE_LIMIT_WORKER_THREADS           11
 
+/*
+** CAPI3REF: Prepare Flags
+** KEYWORDS:
+**
+** These constants define various flags that can be passed into
+** the [sqlite3_prepare_v3()] interface.
+**
+** <dl>
+** [[SQLITE_PREPARE_PERSISTENT]] ^(<dt>SQLITE_PREPARE_PERSISTENT</dt>
+** <dd>The SQLITE_PREPARE_PERSISTENT flag causes [sqlite3_prepare_v3()]
+** to optimize the resulting prepared statement to be retained for a 
+** relatively long amount of time.)^  ^Without this flag,
+** [sqlite3_prepare_v3()] assumes that the prepared statement will be used
+** just once or at most a few times and then destroyed using
+** [sqlite3_finalize()] relatively soon.
+** </dl>
+*/
+#define SQLITE_PREPARE_PERSISTENT              0x01
 
 /*
 ** CAPI3REF: Compiling An SQL Statement
@@ -4567,6 +4605,12 @@ SQLITE_API int sqlite3_limit(sqlite3*, int id, int newVal);
 ** or [GLOB] operator or if the parameter is compared to an indexed column
 ** and the [SQLITE_ENABLE_STAT3] compile-time option is enabled.
 ** </li>
+**
+** <p>^sqlite3_prepare_v3() differs from sqlite3_prepare_v2() only in having
+** the extra prepFlags parameter, which is a bit array consisting of zero or
+** more of the [SQLITE_PREPARE_PERSISTENT|SQLITE_PREPARE_*] flags.  ^The
+** sqlite3_prepare_v2() interface works exactly the same as
+** sqlite3_prepare_v3() with a zero prepFlags parameter.
 ** </ol>
 */
 SQLITE_API int sqlite3_prepare(
@@ -4583,6 +4627,14 @@ SQLITE_API int sqlite3_prepare_v2(
   sqlite3_stmt **ppStmt,  /* OUT: Statement handle */
   const char **pzTail     /* OUT: Pointer to unused portion of zSql */
 );
+SQLITE_API int sqlite3_prepare_v3(
+  sqlite3 *db,            /* Database handle */
+  const char *zSql,       /* SQL statement, UTF-8 encoded */
+  int nByte,              /* Maximum length of zSql in bytes. */
+  unsigned int prepFlags, /* Zero or more SQLITE_PREPARE_ flags */
+  sqlite3_stmt **ppStmt,  /* OUT: Statement handle */
+  const char **pzTail     /* OUT: Pointer to unused portion of zSql */
+);
 SQLITE_API int sqlite3_prepare16(
   sqlite3 *db,            /* Database handle */
   const void *zSql,       /* SQL statement, UTF-16 encoded */
@@ -4594,6 +4646,14 @@ SQLITE_API int sqlite3_prepare16_v2(
   sqlite3 *db,            /* Database handle */
   const void *zSql,       /* SQL statement, UTF-16 encoded */
   int nByte,              /* Maximum length of zSql in bytes. */
+  sqlite3_stmt **ppStmt,  /* OUT: Statement handle */
+  const void **pzTail     /* OUT: Pointer to unused portion of zSql */
+);
+SQLITE_API int sqlite3_prepare16_v3(
+  sqlite3 *db,            /* Database handle */
+  const void *zSql,       /* SQL statement, UTF-16 encoded */
+  int nByte,              /* Maximum length of zSql in bytes. */
+  unsigned int prepFalgs, /* Zero or more SQLITE_PREPARE_ flags */
   sqlite3_stmt **ppStmt,  /* OUT: Statement handle */
   const void **pzTail     /* OUT: Pointer to unused portion of zSql */
 );
@@ -11539,8 +11599,9 @@ struct fts5_api {
 ** Include the configuration header output by 'configure' if we're using the
 ** autoconf-based build
 */
-#ifdef _HAVE_SQLITE_CONFIG_H
-#include "config.h"
+#if defined(_HAVE_SQLITE_CONFIG_H) && !defined(SQLITECONFIG_H)
+/* #include "config.h" */
+#define SQLITECONFIG_H 1
 #endif
 
 /************** Include sqliteLimit.h in the middle of sqliteInt.h ***********/
@@ -14993,8 +15054,8 @@ struct sqlite3 {
 **      SQLITE_CkptFullFSync == PAGER_CKPT_FULLFSYNC
 **      SQLITE_CacheSpill    == PAGER_CACHE_SPILL
 */
-#define SQLITE_VdbeTrace      0x00000001  /* True to trace VDBE execution */
-#define SQLITE_InternChanges  0x00000002  /* Uncommitted Hash table changes */
+#define SQLITE_WriteSchema    0x00000001  /* OK to update SQLITE_MASTER */
+#define SQLITE_LegacyFileFmt  0x00000002  /* Create new databases in format 1 */
 #define SQLITE_FullColNames   0x00000004  /* Show full column names on SELECT */
 #define SQLITE_FullFSync      0x00000008  /* Use full fsync on the backend */
 #define SQLITE_CkptFullFSync  0x00000010  /* Use full fsync for checkpoint */
@@ -15005,29 +15066,34 @@ struct sqlite3 {
                                           /*   the count using a callback. */
 #define SQLITE_NullCallback   0x00000100  /* Invoke the callback once if the */
                                           /*   result set is empty */
-#define SQLITE_SqlTrace       0x00000200  /* Debug print SQL as it executes */
-#define SQLITE_VdbeListing    0x00000400  /* Debug listings of VDBE programs */
-#define SQLITE_WriteSchema    0x00000800  /* OK to update SQLITE_MASTER */
-#define SQLITE_VdbeAddopTrace 0x00001000  /* Trace sqlite3VdbeAddOp() calls */
-#define SQLITE_IgnoreChecks   0x00002000  /* Do not enforce check constraints */
-#define SQLITE_ReadUncommitted 0x0004000  /* For shared-cache mode */
-#define SQLITE_LegacyFileFmt  0x00008000  /* Create new databases in format 1 */
-#define SQLITE_RecoveryMode   0x00010000  /* Ignore schema errors */
-#define SQLITE_ReverseOrder   0x00020000  /* Reverse unordered SELECTs */
-#define SQLITE_RecTriggers    0x00040000  /* Enable recursive triggers */
-#define SQLITE_ForeignKeys    0x00080000  /* Enforce foreign key constraints  */
-#define SQLITE_AutoIndex      0x00100000  /* Enable automatic indexes */
-#define SQLITE_PreferBuiltin  0x00200000  /* Preference to built-in funcs */
-#define SQLITE_LoadExtension  0x00400000  /* Enable load_extension */
-#define SQLITE_LoadExtFunc    0x00800000  /* Enable load_extension() SQL func */
-#define SQLITE_EnableTrigger  0x01000000  /* True to enable triggers */
-#define SQLITE_DeferFKs       0x02000000  /* Defer all FK constraints */
-#define SQLITE_QueryOnly      0x04000000  /* Disable database changes */
-#define SQLITE_VdbeEQP        0x08000000  /* Debug EXPLAIN QUERY PLAN */
-#define SQLITE_Vacuum         0x10000000  /* Currently in a VACUUM */
-#define SQLITE_CellSizeCk     0x20000000  /* Check btree cell sizes on load */
-#define SQLITE_Fts3Tokenizer  0x40000000  /* Enable fts3_tokenizer(2) */
-#define SQLITE_NoCkptOnClose  0x80000000  /* No checkpoint on close()/DETACH */
+#define SQLITE_IgnoreChecks   0x00000200  /* Do not enforce check constraints */
+#define SQLITE_ReadUncommit   0x00000400  /* READ UNCOMMITTED in shared-cache */
+#define SQLITE_NoCkptOnClose  0x00000800  /* No checkpoint on close()/DETACH */
+#define SQLITE_ReverseOrder   0x00001000  /* Reverse unordered SELECTs */
+#define SQLITE_RecTriggers    0x00002000  /* Enable recursive triggers */
+#define SQLITE_ForeignKeys    0x00004000  /* Enforce foreign key constraints  */
+#define SQLITE_AutoIndex      0x00008000  /* Enable automatic indexes */
+#define SQLITE_LoadExtension  0x00010000  /* Enable load_extension */
+#define SQLITE_EnableTrigger  0x00020000  /* True to enable triggers */
+#define SQLITE_DeferFKs       0x00040000  /* Defer all FK constraints */
+#define SQLITE_QueryOnly      0x00080000  /* Disable database changes */
+#define SQLITE_CellSizeCk     0x00100000  /* Check btree cell sizes on load */
+#define SQLITE_Fts3Tokenizer  0x00200000  /* Enable fts3_tokenizer(2) */
+#define SQLITE_EnableQPSG     0x00400000  /* Query Planner Stability Guarantee */
+/* The next four values are not used by PRAGMAs or by sqlite3_dbconfig() and
+** could be factored out into a separate bit vector of the sqlite3 object. */
+#define SQLITE_InternChanges  0x00800000  /* Uncommitted Hash table changes */
+#define SQLITE_LoadExtFunc    0x01000000  /* Enable load_extension() SQL func */
+#define SQLITE_PreferBuiltin  0x02000000  /* Preference to built-in funcs */
+#define SQLITE_Vacuum         0x04000000  /* Currently in a VACUUM */
+/* Flags used only if debugging */
+#ifdef SQLITE_DEBUG
+#define SQLITE_SqlTrace       0x08000000  /* Debug print SQL as it executes */
+#define SQLITE_VdbeListing    0x10000000  /* Debug listings of VDBE programs */
+#define SQLITE_VdbeTrace      0x20000000  /* True to trace VDBE execution */
+#define SQLITE_VdbeAddopTrace 0x40000000  /* Trace sqlite3VdbeAddOp() calls */
+#define SQLITE_VdbeEQP        0x80000000  /* Debug EXPLAIN QUERY PLAN */
+#endif
 
 
 /*
@@ -59627,7 +59693,7 @@ static int hasSharedCacheTableLock(
   ** Return true immediately.
   */
   if( (pBtree->sharable==0)
-   || (eLockType==READ_LOCK && (pBtree->db->flags & SQLITE_ReadUncommitted))
+   || (eLockType==READ_LOCK && (pBtree->db->flags & SQLITE_ReadUncommit))
   ){
     return 1;
   }
@@ -59704,7 +59770,7 @@ static int hasReadConflicts(Btree *pBtree, Pgno iRoot){
   for(p=pBtree->pBt->pCursor; p; p=p->pNext){
     if( p->pgnoRoot==iRoot 
      && p->pBtree!=pBtree
-     && 0==(p->pBtree->db->flags & SQLITE_ReadUncommitted)
+     && 0==(p->pBtree->db->flags & SQLITE_ReadUncommit)
     ){
       return 1;
     }
@@ -59726,7 +59792,7 @@ static int querySharedCacheTableLock(Btree *p, Pgno iTab, u8 eLock){
   assert( sqlite3BtreeHoldsMutex(p) );
   assert( eLock==READ_LOCK || eLock==WRITE_LOCK );
   assert( p->db!=0 );
-  assert( !(p->db->flags&SQLITE_ReadUncommitted)||eLock==WRITE_LOCK||iTab==1 );
+  assert( !(p->db->flags&SQLITE_ReadUncommit)||eLock==WRITE_LOCK||iTab==1 );
   
   /* If requesting a write-lock, then the Btree must have an open write
   ** transaction on this file. And, obviously, for this to be so there 
@@ -59804,7 +59870,7 @@ static int setSharedCacheTableLock(Btree *p, Pgno iTable, u8 eLock){
   ** obtain a read-lock using this function. The only read-lock obtained
   ** by a connection in read-uncommitted mode is on the sqlite_master 
   ** table, and that lock is obtained in BtreeBeginTrans().  */
-  assert( 0==(p->db->flags&SQLITE_ReadUncommitted) || eLock==WRITE_LOCK );
+  assert( 0==(p->db->flags&SQLITE_ReadUncommit) || eLock==WRITE_LOCK );
 
   /* This function should only be called on a sharable b-tree after it 
   ** has been determined that no other b-tree holds a conflicting lock.  */
@@ -62492,7 +62558,7 @@ static int lockBtree(BtShared *pBt){
                                    pageSize-usableSize);
       return rc;
     }
-    if( (pBt->db->flags & SQLITE_RecoveryMode)==0 && nPage>nPageFile ){
+    if( (pBt->db->flags & SQLITE_WriteSchema)==0 && nPage>nPageFile ){
       rc = SQLITE_CORRUPT_BKPT;
       goto page1_init_failed;
     }
@@ -71624,14 +71690,13 @@ static int stat4ValueFromExpr(
   /* Skip over any TK_COLLATE nodes */
   pExpr = sqlite3ExprSkipCollate(pExpr);
 
+  assert( pExpr==0 || pExpr->op!=TK_REGISTER || pExpr->op2!=TK_VARIABLE );
   if( !pExpr ){
     pVal = valueNew(db, pAlloc);
     if( pVal ){
       sqlite3VdbeMemSetNull((Mem*)pVal);
     }
-  }else if( pExpr->op==TK_VARIABLE
-        || NEVER(pExpr->op==TK_REGISTER && pExpr->op2==TK_VARIABLE)
-  ){
+  }else if( pExpr->op==TK_VARIABLE && (db->flags & SQLITE_EnableQPSG)==0 ){
     Vdbe *v;
     int iBindVar = pExpr->iColumn;
     sqlite3VdbeSetVarmask(pParse->pVdbe, iBindVar);
@@ -71639,9 +71704,7 @@ static int stat4ValueFromExpr(
       pVal = valueNew(db, pAlloc);
       if( pVal ){
         rc = sqlite3VdbeMemCopy((Mem*)pVal, &v->aVar[iBindVar-1]);
-        if( rc==SQLITE_OK ){
-          sqlite3ValueApplyAffinity(pVal, affinity, ENC(db));
-        }
+        sqlite3ValueApplyAffinity(pVal, affinity, ENC(db));
         pVal->db = pParse->db;
       }
     }
@@ -76401,6 +76464,7 @@ SQLITE_PRIVATE sqlite3_value *sqlite3VdbeGetBoundValue(Vdbe *v, int iVar, u8 aff
   assert( iVar>0 );
   if( v ){
     Mem *pMem = &v->aVar[iVar-1];
+    assert( (v->db->flags & SQLITE_EnableQPSG)==0 );
     if( 0==(pMem->flags & MEM_Null) ){
       sqlite3_value *pRet = sqlite3ValueNew(v->db);
       if( pRet ){
@@ -76420,6 +76484,7 @@ SQLITE_PRIVATE sqlite3_value *sqlite3VdbeGetBoundValue(Vdbe *v, int iVar, u8 aff
 */
 SQLITE_PRIVATE void sqlite3VdbeSetVarmask(Vdbe *v, int iVar){
   assert( iVar>0 );
+  assert( (v->db->flags & SQLITE_EnableQPSG)==0 );
   if( iVar>=32 ){
     v->expmask |= 0x80000000;
   }else{
@@ -85309,7 +85374,7 @@ case OP_Expire: {
 */
 case OP_TableLock: {
   u8 isWriteLock = (u8)pOp->p3;
-  if( isWriteLock || 0==(db->flags&SQLITE_ReadUncommitted) ){
+  if( isWriteLock || 0==(db->flags&SQLITE_ReadUncommit) ){
     int p1 = pOp->p1; 
     assert( p1>=0 && p1<db->nDb );
     assert( DbMaskTest(p->btreeMask, p1) );
@@ -113396,7 +113461,7 @@ static const PragmaName aPragmaName[] = {
 #if !defined(SQLITE_OMIT_FOREIGN_KEY) && !defined(SQLITE_OMIT_TRIGGER)
  {/* zName:     */ "foreign_key_check",
   /* ePragTyp:  */ PragTyp_FOREIGN_KEY_CHECK,
-  /* ePragFlg:  */ PragFlg_NeedSchema,
+  /* ePragFlg:  */ PragFlg_NeedSchema|PragFlg_Result0,
   /* ColNames:  */ 39, 4,
   /* iArg:      */ 0 },
 #endif
@@ -113483,7 +113548,7 @@ static const PragmaName aPragmaName[] = {
 #if !defined(SQLITE_OMIT_INTEGRITY_CHECK)
  {/* zName:     */ "integrity_check",
   /* ePragTyp:  */ PragTyp_INTEGRITY_CHECK,
-  /* ePragFlg:  */ PragFlg_NeedSchema,
+  /* ePragFlg:  */ PragFlg_NeedSchema|PragFlg_Result0|PragFlg_Result1,
   /* ColNames:  */ 0, 0,
   /* iArg:      */ 0 },
 #endif
@@ -113578,7 +113643,7 @@ static const PragmaName aPragmaName[] = {
 #if !defined(SQLITE_OMIT_INTEGRITY_CHECK)
  {/* zName:     */ "quick_check",
   /* ePragTyp:  */ PragTyp_INTEGRITY_CHECK,
-  /* ePragFlg:  */ PragFlg_NeedSchema,
+  /* ePragFlg:  */ PragFlg_NeedSchema|PragFlg_Result0|PragFlg_Result1,
   /* ColNames:  */ 0, 0,
   /* iArg:      */ 0 },
 #endif
@@ -113587,7 +113652,7 @@ static const PragmaName aPragmaName[] = {
   /* ePragTyp:  */ PragTyp_FLAG,
   /* ePragFlg:  */ PragFlg_Result0|PragFlg_NoColumns1,
   /* ColNames:  */ 0, 0,
-  /* iArg:      */ SQLITE_ReadUncommitted },
+  /* iArg:      */ SQLITE_ReadUncommit },
  {/* zName:     */ "recursive_triggers",
   /* ePragTyp:  */ PragTyp_FLAG,
   /* ePragFlg:  */ PragFlg_Result0|PragFlg_NoColumns1,
@@ -113739,7 +113804,7 @@ static const PragmaName aPragmaName[] = {
   /* ePragTyp:  */ PragTyp_FLAG,
   /* ePragFlg:  */ PragFlg_Result0|PragFlg_NoColumns1,
   /* ColNames:  */ 0, 0,
-  /* iArg:      */ SQLITE_WriteSchema|SQLITE_RecoveryMode },
+  /* iArg:      */ SQLITE_WriteSchema },
 #endif
 };
 /* Number of pragmas: 60 on by default, 74 total. */
@@ -116181,7 +116246,7 @@ static void corruptSchema(
   const char *zExtra   /* Error information */
 ){
   sqlite3 *db = pData->db;
-  if( !db->mallocFailed && (db->flags & SQLITE_RecoveryMode)==0 ){
+  if( !db->mallocFailed && (db->flags & SQLITE_WriteSchema)==0 ){
     char *z;
     if( zObj==0 ) zObj = "?";
     z = sqlite3MPrintf(db, "malformed database schema (%s)", zObj);
@@ -116468,8 +116533,8 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
     rc = SQLITE_NOMEM_BKPT;
     sqlite3ResetAllSchemasOfConnection(db);
   }
-  if( rc==SQLITE_OK || (db->flags&SQLITE_RecoveryMode)){
-    /* Black magic: If the SQLITE_RecoveryMode flag is set, then consider
+  if( rc==SQLITE_OK || (db->flags&SQLITE_WriteSchema)){
+    /* Black magic: If the SQLITE_WriteSchema flag is set, then consider
     ** the schema loaded, even if errors occurred. In this situation the 
     ** current sqlite3_prepare() operation will fail, but the following one
     ** will attempt to compile the supplied statement against whatever subset
@@ -116717,7 +116782,7 @@ static int sqlite3Prepare(
       if( rc ){
         const char *zDb = db->aDb[i].zDbSName;
         sqlite3ErrorWithMsg(db, rc, "database schema is locked: %s", zDb);
-        testcase( db->flags & SQLITE_ReadUncommitted );
+        testcase( db->flags & SQLITE_ReadUncommit );
         goto end_prepare;
       }
     }
@@ -116820,7 +116885,7 @@ static int sqlite3LockAndPrepare(
   sqlite3 *db,              /* Database handle. */
   const char *zSql,         /* UTF-8 encoded SQL statement. */
   int nBytes,               /* Length of zSql in bytes. */
-  int saveSqlFlag,          /* True to copy SQL text into the sqlite3_stmt */
+  u32 prepFlags,            /* Zero or more SQLITE_PREPARE_* flags */
   Vdbe *pOld,               /* VM being reprepared */
   sqlite3_stmt **ppStmt,    /* OUT: A pointer to the prepared statement */
   const char **pzTail       /* OUT: End of parsed string */
@@ -116836,10 +116901,10 @@ static int sqlite3LockAndPrepare(
   }
   sqlite3_mutex_enter(db->mutex);
   sqlite3BtreeEnterAll(db);
-  rc = sqlite3Prepare(db, zSql, nBytes, saveSqlFlag, pOld, ppStmt, pzTail);
+  rc = sqlite3Prepare(db, zSql, nBytes, prepFlags, pOld, ppStmt, pzTail);
   if( rc==SQLITE_SCHEMA ){
     sqlite3_finalize(*ppStmt);
-    rc = sqlite3Prepare(db, zSql, nBytes, saveSqlFlag, pOld, ppStmt, pzTail);
+    rc = sqlite3Prepare(db, zSql, nBytes, prepFlags, pOld, ppStmt, pzTail);
   }
   sqlite3BtreeLeaveAll(db);
   sqlite3_mutex_leave(db->mutex);
@@ -116916,6 +116981,19 @@ SQLITE_API int sqlite3_prepare_v2(
   assert( rc==SQLITE_OK || ppStmt==0 || *ppStmt==0 );  /* VERIFY: F13021 */
   return rc;
 }
+SQLITE_API int sqlite3_prepare_v3(
+  sqlite3 *db,              /* Database handle. */
+  const char *zSql,         /* UTF-8 encoded SQL statement. */
+  int nBytes,               /* Length of zSql in bytes. */
+  unsigned int prepFlags,   /* Zero or more SQLITE_PREPARE_* flags */
+  sqlite3_stmt **ppStmt,    /* OUT: A pointer to the prepared statement */
+  const char **pzTail       /* OUT: End of parsed string */
+){
+  int rc;
+  rc = sqlite3LockAndPrepare(db,zSql,nBytes,1,0,ppStmt,pzTail);
+  assert( rc==SQLITE_OK || ppStmt==0 || *ppStmt==0 );  /* VERIFY: F13021 */
+  return rc;
+}
 
 
 #ifndef SQLITE_OMIT_UTF16
@@ -116926,7 +117004,7 @@ static int sqlite3Prepare16(
   sqlite3 *db,              /* Database handle. */ 
   const void *zSql,         /* UTF-16 encoded SQL statement. */
   int nBytes,               /* Length of zSql in bytes. */
-  int saveSqlFlag,          /* True to save SQL text into the sqlite3_stmt */
+  u32 prepFlags,            /* Zero or more SQLITE_PREPARE_* flags */
   sqlite3_stmt **ppStmt,    /* OUT: A pointer to the prepared statement */
   const void **pzTail       /* OUT: End of parsed string */
 ){
@@ -116954,7 +117032,7 @@ static int sqlite3Prepare16(
   sqlite3_mutex_enter(db->mutex);
   zSql8 = sqlite3Utf16to8(db, zSql, nBytes, SQLITE_UTF16NATIVE);
   if( zSql8 ){
-    rc = sqlite3LockAndPrepare(db, zSql8, -1, saveSqlFlag, 0, ppStmt, &zTail8);
+    rc = sqlite3LockAndPrepare(db, zSql8, -1, prepFlags, 0, ppStmt, &zTail8);
   }
 
   if( zTail8 && pzTail ){
@@ -116996,6 +117074,19 @@ SQLITE_API int sqlite3_prepare16_v2(
   sqlite3 *db,              /* Database handle. */ 
   const void *zSql,         /* UTF-16 encoded SQL statement. */
   int nBytes,               /* Length of zSql in bytes. */
+  sqlite3_stmt **ppStmt,    /* OUT: A pointer to the prepared statement */
+  const void **pzTail       /* OUT: End of parsed string */
+){
+  int rc;
+  rc = sqlite3Prepare16(db,zSql,nBytes,1,ppStmt,pzTail);
+  assert( rc==SQLITE_OK || ppStmt==0 || *ppStmt==0 );  /* VERIFY: F13021 */
+  return rc;
+}
+SQLITE_API int sqlite3_prepare16_v3(
+  sqlite3 *db,              /* Database handle. */ 
+  const void *zSql,         /* UTF-16 encoded SQL statement. */
+  int nBytes,               /* Length of zSql in bytes. */
+  unsigned int prepFlags,   /* Zero or more SQLITE_PREPARE_* flags */
   sqlite3_stmt **ppStmt,    /* OUT: A pointer to the prepared statement */
   const void **pzTail       /* OUT: End of parsed string */
 ){
@@ -129639,7 +129730,7 @@ static int isLikeOrGlob(
 
   pRight = sqlite3ExprSkipCollate(pList->a[0].pExpr);
   op = pRight->op;
-  if( op==TK_VARIABLE ){
+  if( op==TK_VARIABLE && (db->flags & SQLITE_EnableQPSG)==0 ){
     Vdbe *pReprepare = pParse->pReprepare;
     int iCol = pRight->iColumn;
     pVal = sqlite3VdbeGetBoundValue(pReprepare, iCol, SQLITE_AFF_BLOB);
@@ -130601,6 +130692,9 @@ static void exprAnalyze(
       Expr *pNewExpr;
       pNewExpr = sqlite3PExpr(pParse, TK_MATCH, 
                               0, sqlite3ExprDup(db, pRight, 0));
+      if( ExprHasProperty(pExpr, EP_FromJoin) && pNewExpr ){
+        ExprSetProperty(pNewExpr, EP_FromJoin);
+      }
       idxNew = whereClauseInsert(pWC, pNewExpr, TERM_VIRTUAL|TERM_DYNAMIC);
       testcase( idxNew==0 );
       pNewTerm = &pWC->a[idxNew];
@@ -141801,6 +141895,7 @@ SQLITE_API int sqlite3_db_config(sqlite3 *db, int op, ...){
         { SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER, SQLITE_Fts3Tokenizer  },
         { SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, SQLITE_LoadExtension  },
         { SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,      SQLITE_NoCkptOnClose  },
+        { SQLITE_DBCONFIG_ENABLE_QPSG,           SQLITE_EnableQPSG     },
       };
       unsigned int i;
       rc = SQLITE_ERROR; /* IMP: R-42790-23372 */
@@ -143905,6 +144000,9 @@ static int openDatabase(
 #endif
 #if defined(SQLITE_ENABLE_FTS3_TOKENIZER)
                  | SQLITE_Fts3Tokenizer
+#endif
+#if defined(SQLITE_ENABLE_QPSG)
+                 | SQLITE_EnableQPSG
 #endif
       ;
   sqlite3HashInit(&db->aCollSeq);
