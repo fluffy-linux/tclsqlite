@@ -1150,7 +1150,7 @@ extern "C" {
 */
 #define SQLITE_VERSION        "3.20.0"
 #define SQLITE_VERSION_NUMBER 3020000
-#define SQLITE_SOURCE_ID      "2017-07-14 04:16:03 d8cd0434f3451e27aefe38a1a9efdc4dfded2ea33baf25d82814c89264f3afff"
+#define SQLITE_SOURCE_ID      "2017-07-15 20:44:33 b64d64c84484162d1822430036ba0483365a39ef4cf82cd6a7b9436d9e9f50c8"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -3037,10 +3037,10 @@ struct sqlite3_mem_methods {
 ** </dd>
 **
 ** <dt>SQLITE_DBCONFIG_ENABLE_QPSG</dt>
-** <dd>The SQLITE_DBCONFIG_ENABLE_QPSG option activates or deactivates
+** <dd>^(The SQLITE_DBCONFIG_ENABLE_QPSG option activates or deactivates
 ** the [query planner stability guarantee] (QPSG).  When the QPSG is active,
 ** a single SQL query statement will always use the same algorithm regardless
-** of values of [bound parameters].  The QPSG disables some query optimizations
+** of values of [bound parameters].)^ The QPSG disables some query optimizations
 ** that look at the values of bound parameters, which can make some queries
 ** slower.  But the QPSG has the advantage of more predictable behavior.  With
 ** the QPSG active, SQLite will always use the same query plan in the field as
@@ -4527,7 +4527,7 @@ SQLITE_API int sqlite3_limit(sqlite3*, int id, int newVal);
 ** [[SQLITE_PREPARE_PERSISTENT]] ^(<dt>SQLITE_PREPARE_PERSISTENT</dt>
 ** <dd>The SQLITE_PREPARE_PERSISTENT flag is a hint to the query planner
 ** that the prepared statement will be retained for a long time and
-** probably reused many times. ^Without this flag, [sqlite3_prepare_v3()]
+** probably reused many times.)^ ^Without this flag, [sqlite3_prepare_v3()]
 ** and [sqlite3_prepare16_v3()] assume that the prepared statement will 
 ** be used just once or at most a few times and then destroyed using
 ** [sqlite3_finalize()] relatively soon. The current implementation acts
@@ -5772,7 +5772,7 @@ SQLITE_API SQLITE_DEPRECATED int sqlite3_memory_alarm(void(*)(void*,sqlite3_int6
 **
 ** <b>Details:</b>
 **
-** This routine extract type, size, and content information from
+** These routines extract type, size, and content information from
 ** [protected sqlite3_value] objects.  Protected sqlite3_value objects
 ** are used to pass parameter information into implementation of
 ** [application-defined SQL functions] and [virtual tables].
@@ -96931,8 +96931,8 @@ SQLITE_PRIVATE void sqlite3ClearTempRegCache(Parse *pParse){
 SQLITE_PRIVATE int sqlite3NoTempsInRange(Parse *pParse, int iFirst, int iLast){
   int i;
   if( pParse->nRangeReg>0
-   && pParse->iRangeReg+pParse->nRangeReg<iLast
-   && pParse->iRangeReg>=iFirst
+   && pParse->iRangeReg+pParse->nRangeReg > iFirst
+   && pParse->iRangeReg <= iLast
   ){
      return 0;
   }
@@ -106462,6 +106462,10 @@ static void typeofFunc(
   assert( SQLITE_TEXT==3 );
   assert( SQLITE_BLOB==4 );
   assert( SQLITE_NULL==5 );
+  /* EVIDENCE-OF: R-01470-60482 The sqlite3_value_type(V) interface returns
+  ** the datatype code for the initial datatype of the sqlite3_value object
+  ** V. The returned value is one of SQLITE_INTEGER, SQLITE_FLOAT,
+  ** SQLITE_TEXT, SQLITE_BLOB, or SQLITE_NULL. */
   sqlite3_result_text(context, azType[i], -1, SQLITE_STATIC);
 }
 
@@ -115673,6 +115677,7 @@ SQLITE_PRIVATE void sqlite3Pragma(
 
       /* Make sure sufficient number of registers have been allocated */
       pParse->nMem = MAX( pParse->nMem, 8+mxIdx );
+      sqlite3ClearTempRegCache(pParse);
 
       /* Do the b-tree integrity checks */
       sqlite3VdbeAddOp4(v, OP_IntegrityCk, 2, cnt, 1, (char*)aRoot,P4_INTARRAY);
@@ -116087,7 +116092,8 @@ SQLITE_PRIVATE void sqlite3Pragma(
   **    0x0008    (Not yet implemented) Create indexes that might have
   **              been helpful to recent queries
   **
-  ** The default MASK is and always shall be 0xfffe.  0xfffe means perform all    ** of the optimizations listed above except Debug Mode, including new
+  ** The default MASK is and always shall be 0xfffe.  0xfffe means perform all
+  ** of the optimizations listed above except Debug Mode, including new
   ** optimizations that have not yet been invented.  If new optimizations are
   ** ever added that should be off by default, those off-by-default 
   ** optimizations will have bitmasks of 0x10000 or larger.
@@ -117390,9 +117396,14 @@ SQLITE_API int sqlite3_prepare_v2(
   const char **pzTail       /* OUT: End of parsed string */
 ){
   int rc;
+  /* EVIDENCE-OF: R-37923-12173 The sqlite3_prepare_v2() interface works
+  ** exactly the same as sqlite3_prepare_v3() with a zero prepFlags
+  ** parameter.
+  **
+  ** Proof in that the 5th parameter to sqlite3LockAndPrepare is 0 */
   rc = sqlite3LockAndPrepare(db,zSql,nBytes,SQLITE_PREPARE_SAVESQL,0,
                              ppStmt,pzTail);
-  assert( rc==SQLITE_OK || ppStmt==0 || *ppStmt==0 );  /* VERIFY: F13021 */
+  assert( rc==SQLITE_OK || ppStmt==0 || *ppStmt==0 );
   return rc;
 }
 SQLITE_API int sqlite3_prepare_v3(
@@ -117404,10 +117415,17 @@ SQLITE_API int sqlite3_prepare_v3(
   const char **pzTail       /* OUT: End of parsed string */
 ){
   int rc;
+  /* EVIDENCE-OF: R-56861-42673 sqlite3_prepare_v3() differs from
+  ** sqlite3_prepare_v2() only in having the extra prepFlags parameter,
+  ** which is a bit array consisting of zero or more of the
+  ** SQLITE_PREPARE_* flags.
+  **
+  ** Proof by comparison to the implementation of sqlite3_prepare_v2()
+  ** directly above. */
   rc = sqlite3LockAndPrepare(db,zSql,nBytes,
                  SQLITE_PREPARE_SAVESQL|(prepFlags&SQLITE_PREPARE_MASK),
                  0,ppStmt,pzTail);
-  assert( rc==SQLITE_OK || ppStmt==0 || *ppStmt==0 );  /* VERIFY: F13021 */
+  assert( rc==SQLITE_OK || ppStmt==0 || *ppStmt==0 );
   return rc;
 }
 
@@ -142528,6 +142546,8 @@ SQLITE_API int sqlite3_db_config(sqlite3 *db, int op, ...){
   va_start(ap, op);
   switch( op ){
     case SQLITE_DBCONFIG_MAINDBNAME: {
+      /* IMP: R-06824-28531 */
+      /* IMP: R-36257-52125 */
       db->aDb[0].zDbSName = va_arg(ap,const char*);
       rc = SQLITE_OK;
       break;
@@ -200488,7 +200508,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2017-07-14 04:16:03 d8cd0434f3451e27aefe38a1a9efdc4dfded2ea33baf25d82814c89264f3afff", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2017-07-15 20:44:33 b64d64c84484162d1822430036ba0483365a39ef4cf82cd6a7b9436d9e9f50c8", -1, SQLITE_TRANSIENT);
 }
 
 static int fts5Init(sqlite3 *db){
@@ -204412,23 +204432,6 @@ SQLITE_EXTENSION_INIT1
 
 #ifndef SQLITE_OMIT_VIRTUALTABLE
 
-/*
-** The following macros are used to cast pointers to integers.
-** The way you do this varies from one compiler
-** to the next, so we have developed the following set of #if statements
-** to generate appropriate macros for a wide range of compilers.
-*/
-#if defined(__PTRDIFF_TYPE__)  /* This case should work for GCC */
-# define SQLITE_PTR_TO_INT64(X)  ((sqlite3_int64)(__PTRDIFF_TYPE__)(X))
-#elif !defined(__GNUC__)       /* Works for compilers other than LLVM */
-# define SQLITE_PTR_TO_INT64(X)  ((sqlite3_int64)(((char*)X)-(char*)0))
-#elif defined(HAVE_STDINT_H)   /* Use this case if we have ANSI headers */
-# define SQLITE_PTR_TO_INT64(X)  ((sqlite3_int64)(intptr_t)(X))
-#else                          /* Generates a warning - but it always works */
-# define SQLITE_PTR_TO_INT64(X)  ((sqlite3_int64)(X))
-#endif
-
-
 /* stmt_vtab is a subclass of sqlite3_vtab which will
 ** serve as the underlying representation of a stmt virtual table
 */
@@ -204474,22 +204477,21 @@ static int stmtConnect(
   int rc;
 
 /* Column numbers */
-#define STMT_COLUMN_PTR     0   /* Numeric value of the statement pointer */
-#define STMT_COLUMN_SQL     1   /* SQL for the statement */
-#define STMT_COLUMN_NCOL    2   /* Number of result columns */
-#define STMT_COLUMN_RO      3   /* True if read-only */
-#define STMT_COLUMN_BUSY    4   /* True if currently busy */
-#define STMT_COLUMN_NSCAN   5   /* SQLITE_STMTSTATUS_FULLSCAN_STEP */
-#define STMT_COLUMN_NSORT   6   /* SQLITE_STMTSTATUS_SORT */
-#define STMT_COLUMN_NAIDX   7   /* SQLITE_STMTSTATUS_AUTOINDEX */
-#define STMT_COLUMN_NSTEP   8   /* SQLITE_STMTSTATUS_VM_STEP */
-#define STMT_COLUMN_REPREP  9   /* SQLITE_STMTSTATUS_REPREPARE */
-#define STMT_COLUMN_RUN    10   /* SQLITE_STMTSTATUS_RUN */
-#define STMT_COLUMN_MEM    11   /* SQLITE_STMTSTATUS_MEMUSED */
+#define STMT_COLUMN_SQL     0   /* SQL for the statement */
+#define STMT_COLUMN_NCOL    1   /* Number of result columns */
+#define STMT_COLUMN_RO      2   /* True if read-only */
+#define STMT_COLUMN_BUSY    3   /* True if currently busy */
+#define STMT_COLUMN_NSCAN   4   /* SQLITE_STMTSTATUS_FULLSCAN_STEP */
+#define STMT_COLUMN_NSORT   5   /* SQLITE_STMTSTATUS_SORT */
+#define STMT_COLUMN_NAIDX   6   /* SQLITE_STMTSTATUS_AUTOINDEX */
+#define STMT_COLUMN_NSTEP   7   /* SQLITE_STMTSTATUS_VM_STEP */
+#define STMT_COLUMN_REPREP  8   /* SQLITE_STMTSTATUS_REPREPARE */
+#define STMT_COLUMN_RUN     9   /* SQLITE_STMTSTATUS_RUN */
+#define STMT_COLUMN_MEM    10   /* SQLITE_STMTSTATUS_MEMUSED */
 
 
   rc = sqlite3_declare_vtab(db,
-     "CREATE TABLE x(ptr,sql,ncol,ro,busy,nscan,nsort,naidx,nstep,"
+     "CREATE TABLE x(sql,ncol,ro,busy,nscan,nsort,naidx,nstep,"
                     "reprep,run,mem)");
   if( rc==SQLITE_OK ){
     pNew = sqlite3_malloc( sizeof(*pNew) );
@@ -204552,10 +204554,6 @@ static int stmtColumn(
 ){
   stmt_cursor *pCur = (stmt_cursor*)cur;
   switch( i ){
-    case STMT_COLUMN_PTR: {
-      sqlite3_result_int64(ctx, SQLITE_PTR_TO_INT64(pCur->pStmt));
-      break;
-    }
     case STMT_COLUMN_SQL: {
       sqlite3_result_text(ctx, sqlite3_sql(pCur->pStmt), -1, SQLITE_TRANSIENT);
       break;
@@ -204677,7 +204675,7 @@ static sqlite3_module stmtModule = {
 SQLITE_PRIVATE int sqlite3StmtVtabInit(sqlite3 *db){
   int rc = SQLITE_OK;
 #ifndef SQLITE_OMIT_VIRTUALTABLE
-  rc = sqlite3_create_module(db, "stmt", &stmtModule, 0);
+  rc = sqlite3_create_module(db, "sqlite_stmt", &stmtModule, 0);
 #endif
   return rc;
 }
