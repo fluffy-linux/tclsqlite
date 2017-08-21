@@ -13717,55 +13717,55 @@ typedef struct VdbeOpList VdbeOpList;
 #define OP_Savepoint       0
 #define OP_AutoCommit      1
 #define OP_Transaction     2
-#define OP_SorterNext      3
-#define OP_PrevIfOpen      4
-#define OP_NextIfOpen      5
-#define OP_Prev            6
-#define OP_Next            7
+#define OP_SorterNext      3 /* jump                                       */
+#define OP_PrevIfOpen      4 /* jump                                       */
+#define OP_NextIfOpen      5 /* jump                                       */
+#define OP_Prev            6 /* jump                                       */
+#define OP_Next            7 /* jump                                       */
 #define OP_Checkpoint      8
 #define OP_JournalMode     9
 #define OP_Vacuum         10
-#define OP_VFilter        11 /* synopsis: iplan=r[P3] zplan='P4'           */
+#define OP_VFilter        11 /* jump, synopsis: iplan=r[P3] zplan='P4'     */
 #define OP_VUpdate        12 /* synopsis: data=r[P3@P2]                    */
-#define OP_Goto           13
-#define OP_Gosub          14
-#define OP_InitCoroutine  15
-#define OP_Yield          16
-#define OP_MustBeInt      17
-#define OP_Jump           18
+#define OP_Goto           13 /* jump                                       */
+#define OP_Gosub          14 /* jump                                       */
+#define OP_InitCoroutine  15 /* jump                                       */
+#define OP_Yield          16 /* jump                                       */
+#define OP_MustBeInt      17 /* jump                                       */
+#define OP_Jump           18 /* jump                                       */
 #define OP_Not            19 /* same as TK_NOT, synopsis: r[P2]= !r[P1]    */
-#define OP_Once           20
-#define OP_If             21
-#define OP_IfNot          22
-#define OP_IfNullRow      23 /* synopsis: if P1.nullRow then r[P3]=NULL, goto P2 */
-#define OP_SeekLT         24 /* synopsis: key=r[P3@P4]                     */
-#define OP_SeekLE         25 /* synopsis: key=r[P3@P4]                     */
-#define OP_SeekGE         26 /* synopsis: key=r[P3@P4]                     */
-#define OP_SeekGT         27 /* synopsis: key=r[P3@P4]                     */
-#define OP_NoConflict     28 /* synopsis: key=r[P3@P4]                     */
-#define OP_NotFound       29 /* synopsis: key=r[P3@P4]                     */
-#define OP_Found          30 /* synopsis: key=r[P3@P4]                     */
-#define OP_SeekRowid      31 /* synopsis: intkey=r[P3]                     */
-#define OP_NotExists      32 /* synopsis: intkey=r[P3]                     */
-#define OP_Last           33
-#define OP_IfSmaller      34
-#define OP_SorterSort     35
-#define OP_Sort           36
-#define OP_Rewind         37
-#define OP_IdxLE          38 /* synopsis: key=r[P3@P4]                     */
-#define OP_IdxGT          39 /* synopsis: key=r[P3@P4]                     */
-#define OP_IdxLT          40 /* synopsis: key=r[P3@P4]                     */
-#define OP_IdxGE          41 /* synopsis: key=r[P3@P4]                     */
-#define OP_RowSetRead     42 /* synopsis: r[P3]=rowset(P1)                 */
-#define OP_RowSetTest     43 /* synopsis: if r[P3] in rowset(P1) goto P2   */
-#define OP_Program        44
-#define OP_FkIfZero       45 /* synopsis: if fkctr[P1]==0 goto P2          */
-#define OP_IfPos          46 /* synopsis: if r[P1]>0 then r[P1]-=P3, goto P2 */
-#define OP_IfNotZero      47 /* synopsis: if r[P1]!=0 then r[P1]--, goto P2 */
-#define OP_DecrJumpZero   48 /* synopsis: if (--r[P1])==0 goto P2          */
-#define OP_IncrVacuum     49
-#define OP_VNext          50
-#define OP_Init           51 /* synopsis: Start at P2                      */
+#define OP_Once           20 /* jump                                       */
+#define OP_If             21 /* jump                                       */
+#define OP_IfNot          22 /* jump                                       */
+#define OP_IfNullRow      23 /* jump, synopsis: if P1.nullRow then r[P3]=NULL, goto P2 */
+#define OP_SeekLT         24 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_SeekLE         25 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_SeekGE         26 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_SeekGT         27 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_NoConflict     28 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_NotFound       29 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_Found          30 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_SeekRowid      31 /* jump, synopsis: intkey=r[P3]               */
+#define OP_NotExists      32 /* jump, synopsis: intkey=r[P3]               */
+#define OP_Last           33 /* jump                                       */
+#define OP_IfSmaller      34 /* jump                                       */
+#define OP_SorterSort     35 /* jump                                       */
+#define OP_Sort           36 /* jump                                       */
+#define OP_Rewind         37 /* jump                                       */
+#define OP_IdxLE          38 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_IdxGT          39 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_IdxLT          40 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_IdxGE          41 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_RowSetRead     42 /* jump, synopsis: r[P3]=rowset(P1)           */
+#define OP_RowSetTest     43 /* jump, synopsis: if r[P3] in rowset(P1) goto P2 */
+#define OP_Program        44 /* jump                                       */
+#define OP_FkIfZero       45 /* jump, synopsis: if fkctr[P1]==0 goto P2    */
+#define OP_IfPos          46 /* jump, synopsis: if r[P1]>0 then r[P1]-=P3, goto P2 */
+#define OP_IfNotZero      47 /* jump, synopsis: if r[P1]!=0 then r[P1]--, goto P2 */
+#define OP_DecrJumpZero   48 /* jump, synopsis: if (--r[P1])==0 goto P2    */
+#define OP_IncrVacuum     49 /* jump                                       */
+#define OP_VNext          50 /* jump                                       */
+#define OP_Init           51 /* jump, synopsis: Start at P2                */
 #define OP_Return         52
 #define OP_EndCoroutine   53
 #define OP_HaltIfNull     54 /* synopsis: if r[P3]=null halt               */
@@ -13789,15 +13789,15 @@ typedef struct VdbeOpList VdbeOpList;
 #define OP_RealAffinity   72
 #define OP_Cast           73 /* synopsis: affinity(r[P1])                  */
 #define OP_Permutation    74
-#define OP_IsNull         75 /* same as TK_ISNULL, synopsis: if r[P1]==NULL goto P2 */
-#define OP_NotNull        76 /* same as TK_NOTNULL, synopsis: if r[P1]!=NULL goto P2 */
-#define OP_Ne             77 /* same as TK_NE, synopsis: IF r[P3]!=r[P1]   */
-#define OP_Eq             78 /* same as TK_EQ, synopsis: IF r[P3]==r[P1]   */
-#define OP_Gt             79 /* same as TK_GT, synopsis: IF r[P3]>r[P1]    */
-#define OP_Le             80 /* same as TK_LE, synopsis: IF r[P3]<=r[P1]   */
-#define OP_Lt             81 /* same as TK_LT, synopsis: IF r[P3]<r[P1]    */
-#define OP_Ge             82 /* same as TK_GE, synopsis: IF r[P3]>=r[P1]   */
-#define OP_ElseNotEq      83 /* same as TK_ESCAPE                          */
+#define OP_IsNull         75 /* jump, same as TK_ISNULL, synopsis: if r[P1]==NULL goto P2 */
+#define OP_NotNull        76 /* jump, same as TK_NOTNULL, synopsis: if r[P1]!=NULL goto P2 */
+#define OP_Ne             77 /* jump, same as TK_NE, synopsis: IF r[P3]!=r[P1] */
+#define OP_Eq             78 /* jump, same as TK_EQ, synopsis: IF r[P3]==r[P1] */
+#define OP_Gt             79 /* jump, same as TK_GT, synopsis: IF r[P3]>r[P1] */
+#define OP_Le             80 /* jump, same as TK_LE, synopsis: IF r[P3]<=r[P1] */
+#define OP_Lt             81 /* jump, same as TK_LT, synopsis: IF r[P3]<r[P1] */
+#define OP_Ge             82 /* jump, same as TK_GE, synopsis: IF r[P3]>=r[P1] */
+#define OP_ElseNotEq      83 /* jump, same as TK_ESCAPE                    */
 #define OP_BitAnd         84 /* same as TK_BITAND, synopsis: r[P3]=r[P1]&r[P2] */
 #define OP_BitOr          85 /* same as TK_BITOR, synopsis: r[P3]=r[P1]|r[P2] */
 #define OP_ShiftLeft      86 /* same as TK_LSHIFT, synopsis: r[P3]=r[P2]<<r[P1] */
@@ -14970,6 +14970,7 @@ struct Schema {
 #define DB_SchemaLoaded    0x0001  /* The schema has been loaded */
 #define DB_UnresetViews    0x0002  /* Some views have defined column names */
 #define DB_Empty           0x0004  /* The file is empty (length 0 bytes) */
+#define DB_ResetWanted     0x0008  /* Reset the schema when nSchemaLock==0 */
 
 /*
 ** The number of different kinds of things that can be limited
@@ -15085,6 +15086,7 @@ struct sqlite3 {
   int flags;                    /* Miscellaneous flags. See below */
   i64 lastRowid;                /* ROWID of most recent insert (see above) */
   i64 szMmap;                   /* Default mmap_size setting */
+  u32 nSchemaLock;              /* Do not reset the schema when non-zero */
   unsigned int openFlags;       /* Flags passed to sqlite3_vfs.xOpen() */
   int errCode;                  /* Most recent error code (SQLITE_*) */
   int errMask;                  /* & result codes with this before returning */
@@ -16140,7 +16142,8 @@ struct Expr {
                          ** TK_COLUMN: the value of p5 for OP_Column
                          ** TK_AGG_FUNCTION: nesting depth */
   AggInfo *pAggInfo;     /* Used by TK_AGG_COLUMN and TK_AGG_FUNCTION */
-  Table *pTab;           /* Table for TK_COLUMN expressions. */
+  Table *pTab;           /* Table for TK_COLUMN expressions.  Can be NULL
+                         ** for a column of an index on an expression */
 };
 
 /*
@@ -30395,6 +30398,7 @@ SQLITE_PRIVATE const char *sqlite3OpcodeName(int i){
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 /* #include <time.h> */
 #include <sys/time.h>
@@ -30404,7 +30408,7 @@ SQLITE_PRIVATE const char *sqlite3OpcodeName(int i){
 #endif
 
 #if SQLITE_ENABLE_LOCKING_STYLE || defined(__CYGWIN__) || defined(__GNU__) || defined(HAVE_FLOCK)
-# include <sys/ioctl.h>
+/* # include <sys/ioctl.h> */
 # include <sys/file.h>
 # include <sys/param.h>
 #endif /* SQLITE_ENABLE_LOCKING_STYLE */
@@ -30514,7 +30518,7 @@ struct unixFile {
   unsigned short int ctrlFlags;       /* Behavioral bits.  UNIXFILE_* flags */
   int lastErrno;                      /* The unix errno from last I/O error */
   void *lockingContext;               /* Locking style specific state */
-  UnixUnusedFd *pUnused;              /* Pre-allocated UnixUnusedFd */
+  UnixUnusedFd *pPreallocatedUnused;  /* Pre-allocated UnixUnusedFd */
   const char *zPath;                  /* Name of the file */
   unixShm *pShm;                      /* Shared memory segment information */
   int szChunk;                        /* Configured by FCNTL_CHUNK_SIZE */
@@ -30525,10 +30529,8 @@ struct unixFile {
   sqlite3_int64 mmapSizeMax;          /* Configured FCNTL_MMAP_SIZE value */
   void *pMapRegion;                   /* Memory mapped region */
 #endif
-#ifdef __QNXNTO__
   int sectorSize;                     /* Device sector size */
   int deviceCharacteristics;          /* Precomputed device characteristics */
-#endif
 #if SQLITE_ENABLE_LOCKING_STYLE
   int openFlags;                      /* The flags specified at open() */
 #endif
@@ -30831,6 +30833,20 @@ SQLITE_API extern int sqlite3_open_file_count;
 # define lseek lseek64
 #endif
 
+#ifdef __linux__
+/*
+** Linux-specific IOCTL magic numbers used for controlling F2FS
+*/
+#define F2FS_IOCTL_MAGIC        0xf5
+#define F2FS_IOC_START_ATOMIC_WRITE     _IO(F2FS_IOCTL_MAGIC, 1)
+#define F2FS_IOC_COMMIT_ATOMIC_WRITE    _IO(F2FS_IOCTL_MAGIC, 2)
+#define F2FS_IOC_START_VOLATILE_WRITE   _IO(F2FS_IOCTL_MAGIC, 3)
+#define F2FS_IOC_ABORT_VOLATILE_WRITE   _IO(F2FS_IOCTL_MAGIC, 5)
+#define F2FS_IOC_GET_FEATURES           _IOR(F2FS_IOCTL_MAGIC, 12, u32)
+#define F2FS_FEATURE_ATOMIC_WRITE 0x0004
+#endif /* __linux__ */
+
+
 /*
 ** Different Unix systems declare open() in different ways.  Same use
 ** open(const char*,int,mode_t).  Others use open(const char*,int,...).
@@ -31002,6 +31018,9 @@ static struct unix_syscall {
   { "lstat",         (sqlite3_syscall_ptr)0,              0 },
 #endif
 #define osLstat      ((int(*)(const char*,struct stat*))aSyscall[27].pCurrent)
+
+  { "ioctl",         (sqlite3_syscall_ptr)ioctl,          0 },
+#define osIoctl ((int(*)(int,int,...))aSyscall[28].pCurrent)
 
 }; /* End of the overrideable system calls */
 
@@ -31607,7 +31626,8 @@ struct unixInodeInfo {
 /*
 ** A lists of all unixInodeInfo objects.
 */
-static unixInodeInfo *inodeList = 0;
+static unixInodeInfo *inodeList = 0;  /* All unixInodeInfo objects */
+static unsigned int nUnusedFd = 0;    /* Total unused file descriptors */
 
 /*
 **
@@ -31717,6 +31737,7 @@ static void closePendingFds(unixFile *pFile){
     pNext = p->pNext;
     robust_close(pFile, p->fd, __LINE__);
     sqlite3_free(p);
+    nUnusedFd--;
   }
   pInode->pUnused = 0;
 }
@@ -31749,6 +31770,7 @@ static void releaseInodeInfo(unixFile *pFile){
       sqlite3_free(pInode);
     }
   }
+  assert( inodeList!=0 || nUnusedFd==0 );
 }
 
 /*
@@ -31818,6 +31840,7 @@ static int findInodeInfo(
 #else
   fileId.ino = (u64)statbuf.st_ino;
 #endif
+  assert( inodeList!=0 || nUnusedFd==0 );
   pInode = inodeList;
   while( pInode && memcmp(&fileId, &pInode->fileId, sizeof(fileId)) ){
     pInode = pInode->pNext;
@@ -32237,11 +32260,12 @@ end_lock:
 */
 static void setPendingFd(unixFile *pFile){
   unixInodeInfo *pInode = pFile->pInode;
-  UnixUnusedFd *p = pFile->pUnused;
+  UnixUnusedFd *p = pFile->pPreallocatedUnused;
   p->pNext = pInode->pUnused;
   pInode->pUnused = p;
   pFile->h = -1;
-  pFile->pUnused = 0;
+  pFile->pPreallocatedUnused = 0;
+  nUnusedFd++;
 }
 
 /*
@@ -32466,7 +32490,7 @@ static int closeUnixFile(sqlite3_file *id){
 #endif
   OSTRACE(("CLOSE   %-3d\n", pFile->h));
   OpenCounter(-1);
-  sqlite3_free(pFile->pUnused);
+  sqlite3_free(pFile->pPreallocatedUnused);
   memset(pFile, 0, sizeof(unixFile));
   return SQLITE_OK;
 }
@@ -33687,7 +33711,7 @@ static int unixRead(
   /* If this is a database file (not a journal, master-journal or temp
   ** file), the bytes in the locking range should never be read or written. */
 #if 0
-  assert( pFile->pUnused==0
+  assert( pFile->pPreallocatedUnused==0
        || offset>=PENDING_BYTE+512
        || offset+amt<=PENDING_BYTE 
   );
@@ -33800,7 +33824,7 @@ static int unixWrite(
   /* If this is a database file (not a journal, master-journal or temp
   ** file), the bytes in the locking range should never be read or written. */
 #if 0
-  assert( pFile->pUnused==0
+  assert( pFile->pPreallocatedUnused==0
        || offset>=PENDING_BYTE+512
        || offset+amt<=PENDING_BYTE 
   );
@@ -34280,6 +34304,21 @@ static int unixGetTempname(int nBuf, char *zBuf);
 static int unixFileControl(sqlite3_file *id, int op, void *pArg){
   unixFile *pFile = (unixFile*)id;
   switch( op ){
+#if defined(__linux__) && defined(SQLITE_ENABLE_BATCH_ATOMIC_WRITE)
+    case SQLITE_FCNTL_BEGIN_ATOMIC_WRITE: {
+      int rc = osIoctl(pFile->h, F2FS_IOC_START_ATOMIC_WRITE);
+      return rc ? SQLITE_IOERR_BEGIN_ATOMIC : SQLITE_OK;
+    }
+    case SQLITE_FCNTL_COMMIT_ATOMIC_WRITE: {
+      int rc = osIoctl(pFile->h, F2FS_IOC_COMMIT_ATOMIC_WRITE);
+      return rc ? SQLITE_IOERR_COMMIT_ATOMIC : SQLITE_OK;
+    }
+    case SQLITE_FCNTL_ROLLBACK_ATOMIC_WRITE: {
+      int rc = osIoctl(pFile->h, F2FS_IOC_ABORT_VOLATILE_WRITE);
+      return rc ? SQLITE_IOERR_ROLLBACK_ATOMIC : SQLITE_OK;
+    }
+#endif /* __linux__ && SQLITE_ENABLE_BATCH_ATOMIC_WRITE */
+
     case SQLITE_FCNTL_LOCKSTATE: {
       *(int*)pArg = pFile->eFileLock;
       return SQLITE_OK;
@@ -34330,6 +34369,14 @@ static int unixFileControl(sqlite3_file *id, int op, void *pArg){
       if( newLimit>sqlite3GlobalConfig.mxMmap ){
         newLimit = sqlite3GlobalConfig.mxMmap;
       }
+
+      /* The value of newLimit may be eventually cast to (size_t) and passed
+      ** to mmap(). Restrict its value to 2GB if (size_t) is not at least a
+      ** 64-bit type. */
+      if( newLimit>0 && sizeof(size_t)<8 ){
+        newLimit = (newLimit & 0x7FFFFFFF);
+      }
+
       *(i64*)pArg = pFile->mmapSizeMax;
       if( newLimit>=0 && newLimit!=pFile->mmapSizeMax && pFile->nFetchOut==0 ){
         pFile->mmapSizeMax = newLimit;
@@ -34363,30 +34410,41 @@ static int unixFileControl(sqlite3_file *id, int op, void *pArg){
 }
 
 /*
-** Return the sector size in bytes of the underlying block device for
-** the specified file. This is almost always 512 bytes, but may be
-** larger for some devices.
+** If pFd->sectorSize is non-zero when this function is called, it is a
+** no-op. Otherwise, the values of pFd->sectorSize and 
+** pFd->deviceCharacteristics are set according to the file-system 
+** characteristics. 
 **
-** SQLite code assumes this function cannot fail. It also assumes that
-** if two files are created in the same file-system directory (i.e.
-** a database and its journal file) that the sector size will be the
-** same for both.
+** There are two versions of this function. One for QNX and one for all
+** other systems.
 */
-#ifndef __QNXNTO__ 
-static int unixSectorSize(sqlite3_file *NotUsed){
-  UNUSED_PARAMETER(NotUsed);
-  return SQLITE_DEFAULT_SECTOR_SIZE;
-}
-#endif
+#ifndef __QNXNTO__
+static void setDeviceCharacteristics(unixFile *pFd){
+  assert( pFd->deviceCharacteristics==0 || pFd->sectorSize!=0 );
+  if( pFd->sectorSize==0 ){
+#if defined(__linux__) && defined(SQLITE_ENABLE_BATCH_ATOMIC_WRITE)
+    int res;
+    u32 f = 0;
 
-/*
-** The following version of unixSectorSize() is optimized for QNX.
-*/
-#ifdef __QNXNTO__
+    /* Check for support for F2FS atomic batch writes. */
+    res = osIoctl(pFd->h, F2FS_IOC_GET_FEATURES, &f);
+    if( res==0 && (f & F2FS_FEATURE_ATOMIC_WRITE) ){
+      pFd->deviceCharacteristics = SQLITE_IOCAP_BATCH_ATOMIC;
+    }
+#endif /* __linux__ && SQLITE_ENABLE_BATCH_ATOMIC_WRITE */
+
+    /* Set the POWERSAFE_OVERWRITE flag if requested. */
+    if( pFd->ctrlFlags & UNIXFILE_PSOW ){
+      pFd->deviceCharacteristics |= SQLITE_IOCAP_POWERSAFE_OVERWRITE;
+    }
+
+    pFd->sectorSize = SQLITE_DEFAULT_SECTOR_SIZE;
+  }
+}
+#else
 #include <sys/dcmd_blk.h>
 #include <sys/statvfs.h>
-static int unixSectorSize(sqlite3_file *id){
-  unixFile *pFile = (unixFile*)id;
+static void setDeviceCharacteristics(unixFile *pFile){
   if( pFile->sectorSize == 0 ){
     struct statvfs fsInfo;
        
@@ -34455,9 +34513,24 @@ static int unixSectorSize(sqlite3_file *id){
     pFile->deviceCharacteristics = 0;
     pFile->sectorSize = SQLITE_DEFAULT_SECTOR_SIZE;
   }
-  return pFile->sectorSize;
 }
-#endif /* __QNXNTO__ */
+#endif
+
+/*
+** Return the sector size in bytes of the underlying block device for
+** the specified file. This is almost always 512 bytes, but may be
+** larger for some devices.
+**
+** SQLite code assumes this function cannot fail. It also assumes that
+** if two files are created in the same file-system directory (i.e.
+** a database and its journal file) that the sector size will be the
+** same for both.
+*/
+static int unixSectorSize(sqlite3_file *id){
+  unixFile *pFd = (unixFile*)id;
+  setDeviceCharacteristics(pFd);
+  return pFd->sectorSize;
+}
 
 /*
 ** Return the device characteristics for the file.
@@ -34473,16 +34546,9 @@ static int unixSectorSize(sqlite3_file *id){
 ** available to turn it off and URI query parameter available to turn it off.
 */
 static int unixDeviceCharacteristics(sqlite3_file *id){
-  unixFile *p = (unixFile*)id;
-  int rc = 0;
-#ifdef __QNXNTO__
-  if( p->sectorSize==0 ) unixSectorSize(id);
-  rc = p->deviceCharacteristics;
-#endif
-  if( p->ctrlFlags & UNIXFILE_PSOW ){
-    rc |= SQLITE_IOCAP_POWERSAFE_OVERWRITE;
-  }
-  return rc;
+  unixFile *pFd = (unixFile*)id;
+  setDeviceCharacteristics(pFd);
+  return pFd->deviceCharacteristics;
 }
 
 #if !defined(SQLITE_OMIT_WAL) || SQLITE_MAX_MMAP_SIZE>0
@@ -36035,6 +36101,8 @@ static UnixUnusedFd *findReusableFd(const char *zPath, int flags){
 #if !OS_VXWORKS
   struct stat sStat;                   /* Results of stat() call */
 
+  unixEnterMutex();
+
   /* A stat() call may fail for various reasons. If this happens, it is
   ** almost certain that an open() call on the same path will also fail.
   ** For this reason, if an error occurs in the stat() call here, it is
@@ -36043,10 +36111,9 @@ static UnixUnusedFd *findReusableFd(const char *zPath, int flags){
   **
   ** Even if a subsequent open() call does succeed, the consequences of
   ** not searching for a reusable file descriptor are not dire.  */
-  if( 0==osStat(zPath, &sStat) ){
+  if( nUnusedFd>0 && 0==osStat(zPath, &sStat) ){
     unixInodeInfo *pInode;
 
-    unixEnterMutex();
     pInode = inodeList;
     while( pInode && (pInode->fileId.dev!=sStat.st_dev
                      || pInode->fileId.ino!=(u64)sStat.st_ino) ){
@@ -36057,11 +36124,12 @@ static UnixUnusedFd *findReusableFd(const char *zPath, int flags){
       for(pp=&pInode->pUnused; *pp && (*pp)->flags!=flags; pp=&((*pp)->pNext));
       pUnused = *pp;
       if( pUnused ){
+        nUnusedFd--;
         *pp = pUnused->pNext;
       }
     }
-    unixLeaveMutex();
   }
+  unixLeaveMutex();
 #endif    /* if !OS_VXWORKS */
   return pUnused;
 }
@@ -36282,7 +36350,7 @@ static int unixOpen(
         return SQLITE_NOMEM_BKPT;
       }
     }
-    p->pUnused = pUnused;
+    p->pPreallocatedUnused = pUnused;
 
     /* Database filenames are double-zero terminated if they are not
     ** URIs with parameters.  Hence, they can always be passed into
@@ -36319,7 +36387,7 @@ static int unixOpen(
     gid_t gid;                    /* Groupid for the file */
     rc = findCreateFileMode(zName, flags, &openMode, &uid, &gid);
     if( rc!=SQLITE_OK ){
-      assert( !p->pUnused );
+      assert( !p->pPreallocatedUnused );
       assert( eType==SQLITE_OPEN_WAL || eType==SQLITE_OPEN_MAIN_JOURNAL );
       return rc;
     }
@@ -36353,9 +36421,9 @@ static int unixOpen(
     *pOutFlags = flags;
   }
 
-  if( p->pUnused ){
-    p->pUnused->fd = fd;
-    p->pUnused->flags = flags;
+  if( p->pPreallocatedUnused ){
+    p->pPreallocatedUnused->fd = fd;
+    p->pPreallocatedUnused->flags = flags;
   }
 
   if( isDelete ){
@@ -36436,7 +36504,7 @@ static int unixOpen(
 
 open_finished:
   if( rc!=SQLITE_OK ){
-    sqlite3_free(p->pUnused);
+    sqlite3_free(p->pPreallocatedUnused);
   }
   return rc;
 }
@@ -37177,7 +37245,7 @@ static int proxyCreateUnixFile(
   dummyVfs.zName = "dummy";
   pUnused->fd = fd;
   pUnused->flags = openFlags;
-  pNew->pUnused = pUnused;
+  pNew->pPreallocatedUnused = pUnused;
   
   rc = fillInUnixFile(&dummyVfs, fd, (sqlite3_file*)pNew, path, 0);
   if( rc==SQLITE_OK ){
@@ -38135,7 +38203,7 @@ SQLITE_API int sqlite3_os_init(void){
 
   /* Double-check that the aSyscall[] array has been constructed
   ** correctly.  See ticket [bb3a86e890c8e96ab] */
-  assert( ArraySize(aSyscall)==28 );
+  assert( ArraySize(aSyscall)==29 );
 
   /* Register all VFSes defined in the aVfs[] array */
   for(i=0; i<(sizeof(aVfs)/sizeof(sqlite3_vfs)); i++){
@@ -41919,6 +41987,14 @@ static int winFileControl(sqlite3_file *id, int op, void *pArg){
       if( newLimit>sqlite3GlobalConfig.mxMmap ){
         newLimit = sqlite3GlobalConfig.mxMmap;
       }
+
+      /* The value of newLimit may be eventually cast to (SIZE_T) and passed
+      ** to MapViewOfFile(). Restrict its value to 2GB if (SIZE_T) is not at
+      ** least a 64-bit type. */
+      if( newLimit>0 && sizeof(SIZE_T)<8 ){
+        newLimit = (newLimit & 0x7FFFFFFF);
+      }
+
       *(i64*)pArg = pFile->mmapSizeMax;
       if( newLimit>=0 && newLimit!=pFile->mmapSizeMax && pFile->nFetchOut==0 ){
         pFile->mmapSizeMax = newLimit;
@@ -92553,7 +92629,7 @@ SQLITE_PRIVATE Expr *sqlite3Expr(
 ){
   Token x;
   x.z = zToken;
-  x.n = zToken ? sqlite3Strlen30(zToken) : 0;
+  x.n = sqlite3Strlen30(zToken);
   return sqlite3ExprAlloc(db, op, &x, 0);
 }
 
@@ -93751,8 +93827,8 @@ SQLITE_PRIVATE int sqlite3ExprCanBeNull(const Expr *p){
     case TK_BLOB:
       return 0;
     case TK_COLUMN:
-      assert( p->pTab!=0 );
       return ExprHasProperty(p, EP_CanBeNull) ||
+             p->pTab==0 ||  /* Reference to column of index on expression */
              (p->iColumn>=0 && p->pTab->aCol[p->iColumn].notNull==0);
     default:
       return 1;
@@ -101155,28 +101231,26 @@ SQLITE_PRIVATE void sqlite3CollapseDatabaseArray(sqlite3 *db){
 
 /*
 ** Reset the schema for the database at index iDb.  Also reset the
-** TEMP schema.
+** TEMP schema.  The reset is deferred if db->nSchemaLock is not zero.
+** Deferred resets may be run by calling with iDb<0.
 */
 SQLITE_PRIVATE void sqlite3ResetOneSchema(sqlite3 *db, int iDb){
-  Db *pDb;
+  int i;
   assert( iDb<db->nDb );
 
-  /* Case 1:  Reset the single schema identified by iDb */
-  pDb = &db->aDb[iDb];
-  assert( sqlite3SchemaMutexHeld(db, iDb, 0) );
-  assert( pDb->pSchema!=0 );
-  sqlite3SchemaClear(pDb->pSchema);
-
-  /* If any database other than TEMP is reset, then also reset TEMP
-  ** since TEMP might be holding triggers that reference tables in the
-  ** other database.
-  */
-  if( iDb!=1 ){
-    pDb = &db->aDb[1];
-    assert( pDb->pSchema!=0 );
-    sqlite3SchemaClear(pDb->pSchema);
+  if( iDb>=0 ){
+    assert( sqlite3SchemaMutexHeld(db, iDb, 0) );
+    DbSetProperty(db, iDb, DB_ResetWanted);
+    DbSetProperty(db, 1, DB_ResetWanted);
   }
-  return;
+
+  if( db->nSchemaLock==0 ){
+    for(i=0; i<db->nDb; i++){
+      if( DbHasProperty(db, i, DB_ResetWanted) ){
+        sqlite3SchemaClear(db->aDb[i].pSchema);
+      }
+    }
+  }
 }
 
 /*
@@ -101186,6 +101260,7 @@ SQLITE_PRIVATE void sqlite3ResetOneSchema(sqlite3 *db, int iDb){
 SQLITE_PRIVATE void sqlite3ResetAllSchemasOfConnection(sqlite3 *db){
   int i;
   sqlite3BtreeEnterAll(db);
+  assert( db->nSchemaLock==0 );
   for(i=0; i<db->nDb; i++){
     Db *pDb = &db->aDb[i];
     if( pDb->pSchema ){
@@ -102795,6 +102870,9 @@ SQLITE_PRIVATE int sqlite3ViewGetColumnNames(Parse *pParse, Table *pTable){
   int nErr = 0;     /* Number of errors encountered */
   int n;            /* Temporarily holds the number of cursors assigned */
   sqlite3 *db = pParse->db;  /* Database connection for malloc errors */
+#ifndef SQLITE_OMIT_VIRTUALTABLE	
+  int rc;
+#endif
 #ifndef SQLITE_OMIT_AUTHORIZATION
   sqlite3_xauth xAuth;       /* Saved xAuth pointer */
 #endif
@@ -102802,7 +102880,10 @@ SQLITE_PRIVATE int sqlite3ViewGetColumnNames(Parse *pParse, Table *pTable){
   assert( pTable );
 
 #ifndef SQLITE_OMIT_VIRTUALTABLE
-  if( sqlite3VtabCallConnect(pParse, pTable) ){
+  db->nSchemaLock++;
+  rc = sqlite3VtabCallConnect(pParse, pTable);
+  db->nSchemaLock--;
+  if( rc ){
     return SQLITE_ERROR;
   }
   if( IsVirtual(pTable) ) return 0;
@@ -105542,8 +105623,8 @@ SQLITE_PRIVATE void sqlite3SchemaClear(void *p){
   pSchema->pSeqTab = 0;
   if( pSchema->schemaFlags & DB_SchemaLoaded ){
     pSchema->iGeneration++;
-    pSchema->schemaFlags &= ~DB_SchemaLoaded;
   }
+  pSchema->schemaFlags &= ~(DB_SchemaLoaded|DB_ResetWanted);
 }
 
 /*
@@ -112457,7 +112538,7 @@ struct sqlite3_api_routines {
   int (*uri_boolean)(const char*,const char*,int);
   sqlite3_int64 (*uri_int64)(const char*,const char*,sqlite3_int64);
   const char *(*uri_parameter)(const char*,const char*);
-  char *(*vsnprintf)(int,char*,const char*,va_list);
+  char *(*xvsnprintf)(int,char*,const char*,va_list);
   int (*wal_checkpoint_v2)(sqlite3*,const char*,int,int*,int*);
   /* Version 3.8.7 and later */
   int (*auto_extension)(void(*)(void));
@@ -112659,7 +112740,7 @@ typedef int (*sqlite3_loadext_entry)(
 #define sqlite3_value_text16le         sqlite3_api->value_text16le
 #define sqlite3_value_type             sqlite3_api->value_type
 #define sqlite3_vmprintf               sqlite3_api->vmprintf
-#define sqlite3_vsnprintf              sqlite3_api->vsnprintf
+#define sqlite3_vsnprintf              sqlite3_api->xvsnprintf
 #define sqlite3_overload_function      sqlite3_api->overload_function
 #define sqlite3_prepare_v2             sqlite3_api->prepare_v2
 #define sqlite3_prepare16_v2           sqlite3_api->prepare16_v2
@@ -112735,7 +112816,7 @@ typedef int (*sqlite3_loadext_entry)(
 #define sqlite3_uri_boolean            sqlite3_api->uri_boolean
 #define sqlite3_uri_int64              sqlite3_api->uri_int64
 #define sqlite3_uri_parameter          sqlite3_api->uri_parameter
-#define sqlite3_uri_vsnprintf          sqlite3_api->vsnprintf
+#define sqlite3_uri_vsnprintf          sqlite3_api->xvsnprintf
 #define sqlite3_wal_checkpoint_v2      sqlite3_api->wal_checkpoint_v2
 /* Version 3.8.7 and later */
 #define sqlite3_auto_extension         sqlite3_api->auto_extension
@@ -117430,6 +117511,7 @@ static int sqlite3LockAndPrepare(
   sqlite3BtreeEnterAll(db);
   rc = sqlite3Prepare(db, zSql, nBytes, prepFlags, pOld, ppStmt, pzTail);
   if( rc==SQLITE_SCHEMA ){
+    sqlite3ResetOneSchema(db, -1);
     sqlite3_finalize(*ppStmt);
     rc = sqlite3Prepare(db, zSql, nBytes, prepFlags, pOld, ppStmt, pzTail);
   }
@@ -119265,6 +119347,8 @@ static void generateColumnNames(
     Expr *p = pEList->a[i].pExpr;
 
     assert( p!=0 );
+    assert( p->op!=TK_AGG_COLUMN );  /* Agg processing has not run yet */
+    assert( p->op!=TK_COLUMN || p->pTab!=0 ); /* Covering indexes not yet coded */
     if( pEList->a[i].zName ){
       /* An AS clause always takes first priority */
       char *zName = pEList->a[i].zName;
@@ -130385,7 +130469,7 @@ static int isLikeOrGlob(
   int *pisComplete, /* True if the only wildcard is % in the last character */
   int *pnoCase      /* True if uppercase is equivalent to lowercase */
 ){
-  const char *z = 0;         /* String on RHS of LIKE operator */
+  const u8 *z = 0;         /* String on RHS of LIKE operator */
   Expr *pRight, *pLeft;      /* Right and left size of LIKE operator */
   ExprList *pList;           /* List of operands to the LIKE operator */
   int c;                     /* One character in z[] */
@@ -130412,12 +130496,12 @@ static int isLikeOrGlob(
     int iCol = pRight->iColumn;
     pVal = sqlite3VdbeGetBoundValue(pReprepare, iCol, SQLITE_AFF_BLOB);
     if( pVal && sqlite3_value_type(pVal)==SQLITE_TEXT ){
-      z = (char *)sqlite3_value_text(pVal);
+      z = sqlite3_value_text(pVal);
     }
     sqlite3VdbeSetVarmask(pParse->pVdbe, iCol);
     assert( pRight->op==TK_VARIABLE || pRight->op==TK_REGISTER );
   }else if( op==TK_STRING ){
-    z = pRight->u.zToken;
+    z = (u8*)pRight->u.zToken;
   }
   if( z ){
 
@@ -130444,7 +130528,7 @@ static int isLikeOrGlob(
     if( cnt!=0 && 255!=(u8)z[cnt-1] ){
       Expr *pPrefix;
       *pisComplete = c==wc[0] && z[cnt+1]==0;
-      pPrefix = sqlite3Expr(db, TK_STRING, z);
+      pPrefix = sqlite3Expr(db, TK_STRING, (char*)z);
       if( pPrefix ) pPrefix->u.zToken[cnt] = 0;
       *ppPrefix = pPrefix;
       if( op==TK_VARIABLE ){
@@ -135350,7 +135434,7 @@ static i8 wherePathSatisfiesOrderBy(
               continue;
             }
           }
-          if( iColumn>=0 ){
+          if( iColumn!=XN_ROWID ){
             pColl = sqlite3ExprCollSeq(pWInfo->pParse, pOrderBy->a[i].pExpr);
             if( !pColl ) pColl = db->pDfltColl;
             if( sqlite3StrICmp(pColl->zName, pIndex->azColl[j])!=0 ) continue;
@@ -144531,7 +144615,7 @@ SQLITE_PRIVATE int sqlite3ParseUri(
       if( nOpt==3 && memcmp("vfs", zOpt, 3)==0 ){
         zVfs = zVal;
       }else{
-        struct OpenMode {
+        const struct OpenMode {
           const char *z;
           int mode;
         } *aMode = 0;
@@ -144540,7 +144624,7 @@ SQLITE_PRIVATE int sqlite3ParseUri(
         int limit = 0;
 
         if( nOpt==5 && memcmp("cache", zOpt, 5)==0 ){
-          static struct OpenMode aCacheMode[] = {
+          static const struct OpenMode aCacheMode[] = {
             { "shared",  SQLITE_OPEN_SHAREDCACHE },
             { "private", SQLITE_OPEN_PRIVATECACHE },
             { 0, 0 }
@@ -144552,7 +144636,7 @@ SQLITE_PRIVATE int sqlite3ParseUri(
           zModeType = "cache";
         }
         if( nOpt==4 && memcmp("mode", zOpt, 4)==0 ){
-          static struct OpenMode aOpenMode[] = {
+          static const struct OpenMode aOpenMode[] = {
             { "ro",  SQLITE_OPEN_READONLY },
             { "rw",  SQLITE_OPEN_READWRITE }, 
             { "rwc", SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE },
