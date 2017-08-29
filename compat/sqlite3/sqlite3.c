@@ -13717,55 +13717,55 @@ typedef struct VdbeOpList VdbeOpList;
 #define OP_Savepoint       0
 #define OP_AutoCommit      1
 #define OP_Transaction     2
-#define OP_SorterNext      3
-#define OP_PrevIfOpen      4
-#define OP_NextIfOpen      5
-#define OP_Prev            6
-#define OP_Next            7
+#define OP_SorterNext      3 /* jump                                       */
+#define OP_PrevIfOpen      4 /* jump                                       */
+#define OP_NextIfOpen      5 /* jump                                       */
+#define OP_Prev            6 /* jump                                       */
+#define OP_Next            7 /* jump                                       */
 #define OP_Checkpoint      8
 #define OP_JournalMode     9
 #define OP_Vacuum         10
-#define OP_VFilter        11 /* synopsis: iplan=r[P3] zplan='P4'           */
+#define OP_VFilter        11 /* jump, synopsis: iplan=r[P3] zplan='P4'     */
 #define OP_VUpdate        12 /* synopsis: data=r[P3@P2]                    */
-#define OP_Goto           13
-#define OP_Gosub          14
-#define OP_InitCoroutine  15
-#define OP_Yield          16
-#define OP_MustBeInt      17
-#define OP_Jump           18
+#define OP_Goto           13 /* jump                                       */
+#define OP_Gosub          14 /* jump                                       */
+#define OP_InitCoroutine  15 /* jump                                       */
+#define OP_Yield          16 /* jump                                       */
+#define OP_MustBeInt      17 /* jump                                       */
+#define OP_Jump           18 /* jump                                       */
 #define OP_Not            19 /* same as TK_NOT, synopsis: r[P2]= !r[P1]    */
-#define OP_Once           20
-#define OP_If             21
-#define OP_IfNot          22
-#define OP_IfNullRow      23 /* synopsis: if P1.nullRow then r[P3]=NULL, goto P2 */
-#define OP_SeekLT         24 /* synopsis: key=r[P3@P4]                     */
-#define OP_SeekLE         25 /* synopsis: key=r[P3@P4]                     */
-#define OP_SeekGE         26 /* synopsis: key=r[P3@P4]                     */
-#define OP_SeekGT         27 /* synopsis: key=r[P3@P4]                     */
-#define OP_NoConflict     28 /* synopsis: key=r[P3@P4]                     */
-#define OP_NotFound       29 /* synopsis: key=r[P3@P4]                     */
-#define OP_Found          30 /* synopsis: key=r[P3@P4]                     */
-#define OP_SeekRowid      31 /* synopsis: intkey=r[P3]                     */
-#define OP_NotExists      32 /* synopsis: intkey=r[P3]                     */
-#define OP_Last           33
-#define OP_IfSmaller      34
-#define OP_SorterSort     35
-#define OP_Sort           36
-#define OP_Rewind         37
-#define OP_IdxLE          38 /* synopsis: key=r[P3@P4]                     */
-#define OP_IdxGT          39 /* synopsis: key=r[P3@P4]                     */
-#define OP_IdxLT          40 /* synopsis: key=r[P3@P4]                     */
-#define OP_IdxGE          41 /* synopsis: key=r[P3@P4]                     */
-#define OP_RowSetRead     42 /* synopsis: r[P3]=rowset(P1)                 */
-#define OP_RowSetTest     43 /* synopsis: if r[P3] in rowset(P1) goto P2   */
-#define OP_Program        44
-#define OP_FkIfZero       45 /* synopsis: if fkctr[P1]==0 goto P2          */
-#define OP_IfPos          46 /* synopsis: if r[P1]>0 then r[P1]-=P3, goto P2 */
-#define OP_IfNotZero      47 /* synopsis: if r[P1]!=0 then r[P1]--, goto P2 */
-#define OP_DecrJumpZero   48 /* synopsis: if (--r[P1])==0 goto P2          */
-#define OP_IncrVacuum     49
-#define OP_VNext          50
-#define OP_Init           51 /* synopsis: Start at P2                      */
+#define OP_Once           20 /* jump                                       */
+#define OP_If             21 /* jump                                       */
+#define OP_IfNot          22 /* jump                                       */
+#define OP_IfNullRow      23 /* jump, synopsis: if P1.nullRow then r[P3]=NULL, goto P2 */
+#define OP_SeekLT         24 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_SeekLE         25 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_SeekGE         26 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_SeekGT         27 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_NoConflict     28 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_NotFound       29 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_Found          30 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_SeekRowid      31 /* jump, synopsis: intkey=r[P3]               */
+#define OP_NotExists      32 /* jump, synopsis: intkey=r[P3]               */
+#define OP_Last           33 /* jump                                       */
+#define OP_IfSmaller      34 /* jump                                       */
+#define OP_SorterSort     35 /* jump                                       */
+#define OP_Sort           36 /* jump                                       */
+#define OP_Rewind         37 /* jump                                       */
+#define OP_IdxLE          38 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_IdxGT          39 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_IdxLT          40 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_IdxGE          41 /* jump, synopsis: key=r[P3@P4]               */
+#define OP_RowSetRead     42 /* jump, synopsis: r[P3]=rowset(P1)           */
+#define OP_RowSetTest     43 /* jump, synopsis: if r[P3] in rowset(P1) goto P2 */
+#define OP_Program        44 /* jump                                       */
+#define OP_FkIfZero       45 /* jump, synopsis: if fkctr[P1]==0 goto P2    */
+#define OP_IfPos          46 /* jump, synopsis: if r[P1]>0 then r[P1]-=P3, goto P2 */
+#define OP_IfNotZero      47 /* jump, synopsis: if r[P1]!=0 then r[P1]--, goto P2 */
+#define OP_DecrJumpZero   48 /* jump, synopsis: if (--r[P1])==0 goto P2    */
+#define OP_IncrVacuum     49 /* jump                                       */
+#define OP_VNext          50 /* jump                                       */
+#define OP_Init           51 /* jump, synopsis: Start at P2                */
 #define OP_Return         52
 #define OP_EndCoroutine   53
 #define OP_HaltIfNull     54 /* synopsis: if r[P3]=null halt               */
@@ -13789,15 +13789,15 @@ typedef struct VdbeOpList VdbeOpList;
 #define OP_RealAffinity   72
 #define OP_Cast           73 /* synopsis: affinity(r[P1])                  */
 #define OP_Permutation    74
-#define OP_IsNull         75 /* same as TK_ISNULL, synopsis: if r[P1]==NULL goto P2 */
-#define OP_NotNull        76 /* same as TK_NOTNULL, synopsis: if r[P1]!=NULL goto P2 */
-#define OP_Ne             77 /* same as TK_NE, synopsis: IF r[P3]!=r[P1]   */
-#define OP_Eq             78 /* same as TK_EQ, synopsis: IF r[P3]==r[P1]   */
-#define OP_Gt             79 /* same as TK_GT, synopsis: IF r[P3]>r[P1]    */
-#define OP_Le             80 /* same as TK_LE, synopsis: IF r[P3]<=r[P1]   */
-#define OP_Lt             81 /* same as TK_LT, synopsis: IF r[P3]<r[P1]    */
-#define OP_Ge             82 /* same as TK_GE, synopsis: IF r[P3]>=r[P1]   */
-#define OP_ElseNotEq      83 /* same as TK_ESCAPE                          */
+#define OP_IsNull         75 /* jump, same as TK_ISNULL, synopsis: if r[P1]==NULL goto P2 */
+#define OP_NotNull        76 /* jump, same as TK_NOTNULL, synopsis: if r[P1]!=NULL goto P2 */
+#define OP_Ne             77 /* jump, same as TK_NE, synopsis: IF r[P3]!=r[P1] */
+#define OP_Eq             78 /* jump, same as TK_EQ, synopsis: IF r[P3]==r[P1] */
+#define OP_Gt             79 /* jump, same as TK_GT, synopsis: IF r[P3]>r[P1] */
+#define OP_Le             80 /* jump, same as TK_LE, synopsis: IF r[P3]<=r[P1] */
+#define OP_Lt             81 /* jump, same as TK_LT, synopsis: IF r[P3]<r[P1] */
+#define OP_Ge             82 /* jump, same as TK_GE, synopsis: IF r[P3]>=r[P1] */
+#define OP_ElseNotEq      83 /* jump, same as TK_ESCAPE                    */
 #define OP_BitAnd         84 /* same as TK_BITAND, synopsis: r[P3]=r[P1]&r[P2] */
 #define OP_BitOr          85 /* same as TK_BITOR, synopsis: r[P3]=r[P1]|r[P2] */
 #define OP_ShiftLeft      86 /* same as TK_LSHIFT, synopsis: r[P3]=r[P2]<<r[P1] */
@@ -16140,7 +16140,8 @@ struct Expr {
                          ** TK_COLUMN: the value of p5 for OP_Column
                          ** TK_AGG_FUNCTION: nesting depth */
   AggInfo *pAggInfo;     /* Used by TK_AGG_COLUMN and TK_AGG_FUNCTION */
-  Table *pTab;           /* Table for TK_COLUMN expressions. */
+  Table *pTab;           /* Table for TK_COLUMN expressions.  Can be NULL
+                         ** for a column of an index on an expression */
 };
 
 /*
@@ -34330,6 +34331,14 @@ static int unixFileControl(sqlite3_file *id, int op, void *pArg){
       if( newLimit>sqlite3GlobalConfig.mxMmap ){
         newLimit = sqlite3GlobalConfig.mxMmap;
       }
+
+      /* The value of newLimit may be eventually cast to (size_t) and passed
+      ** to mmap(). Restrict its value to 2GB if (size_t) is not at least a
+      ** 64-bit type. */
+      if( newLimit>0 && sizeof(size_t)<8 ){
+        newLimit = (newLimit & 0x7FFFFFFF);
+      }
+
       *(i64*)pArg = pFile->mmapSizeMax;
       if( newLimit>=0 && newLimit!=pFile->mmapSizeMax && pFile->nFetchOut==0 ){
         pFile->mmapSizeMax = newLimit;
@@ -41919,6 +41928,14 @@ static int winFileControl(sqlite3_file *id, int op, void *pArg){
       if( newLimit>sqlite3GlobalConfig.mxMmap ){
         newLimit = sqlite3GlobalConfig.mxMmap;
       }
+
+      /* The value of newLimit may be eventually cast to (SIZE_T) and passed
+      ** to MapViewOfFile(). Restrict its value to 2GB if (SIZE_T) is not at
+      ** least a 64-bit type. */
+      if( newLimit>0 && sizeof(SIZE_T)<8 ){
+        newLimit = (newLimit & 0x7FFFFFFF);
+      }
+
       *(i64*)pArg = pFile->mmapSizeMax;
       if( newLimit>=0 && newLimit!=pFile->mmapSizeMax && pFile->nFetchOut==0 ){
         pFile->mmapSizeMax = newLimit;
@@ -92554,7 +92571,7 @@ SQLITE_PRIVATE Expr *sqlite3Expr(
 ){
   Token x;
   x.z = zToken;
-  x.n = zToken ? sqlite3Strlen30(zToken) : 0;
+  x.n = sqlite3Strlen30(zToken);
   return sqlite3ExprAlloc(db, op, &x, 0);
 }
 
@@ -93752,8 +93769,8 @@ SQLITE_PRIVATE int sqlite3ExprCanBeNull(const Expr *p){
     case TK_BLOB:
       return 0;
     case TK_COLUMN:
-      assert( p->pTab!=0 );
       return ExprHasProperty(p, EP_CanBeNull) ||
+             p->pTab==0 ||  /* Reference to column of index on expression */
              (p->iColumn>=0 && p->pTab->aCol[p->iColumn].notNull==0);
     default:
       return 1;
@@ -119266,6 +119283,8 @@ static void generateColumnNames(
     Expr *p = pEList->a[i].pExpr;
 
     assert( p!=0 );
+    assert( p->op!=TK_AGG_COLUMN );  /* Agg processing has not run yet */
+    assert( p->op!=TK_COLUMN || p->pTab!=0 ); /* Covering indexes not yet coded */
     if( pEList->a[i].zName ){
       /* An AS clause always takes first priority */
       char *zName = pEList->a[i].zName;
@@ -130386,7 +130405,7 @@ static int isLikeOrGlob(
   int *pisComplete, /* True if the only wildcard is % in the last character */
   int *pnoCase      /* True if uppercase is equivalent to lowercase */
 ){
-  const char *z = 0;         /* String on RHS of LIKE operator */
+  const u8 *z = 0;         /* String on RHS of LIKE operator */
   Expr *pRight, *pLeft;      /* Right and left size of LIKE operator */
   ExprList *pList;           /* List of operands to the LIKE operator */
   int c;                     /* One character in z[] */
@@ -130413,12 +130432,12 @@ static int isLikeOrGlob(
     int iCol = pRight->iColumn;
     pVal = sqlite3VdbeGetBoundValue(pReprepare, iCol, SQLITE_AFF_BLOB);
     if( pVal && sqlite3_value_type(pVal)==SQLITE_TEXT ){
-      z = (char *)sqlite3_value_text(pVal);
+      z = sqlite3_value_text(pVal);
     }
     sqlite3VdbeSetVarmask(pParse->pVdbe, iCol);
     assert( pRight->op==TK_VARIABLE || pRight->op==TK_REGISTER );
   }else if( op==TK_STRING ){
-    z = pRight->u.zToken;
+    z = (u8*)pRight->u.zToken;
   }
   if( z ){
 
@@ -130445,7 +130464,7 @@ static int isLikeOrGlob(
     if( cnt!=0 && 255!=(u8)z[cnt-1] ){
       Expr *pPrefix;
       *pisComplete = c==wc[0] && z[cnt+1]==0;
-      pPrefix = sqlite3Expr(db, TK_STRING, z);
+      pPrefix = sqlite3Expr(db, TK_STRING, (char*)z);
       if( pPrefix ) pPrefix->u.zToken[cnt] = 0;
       *ppPrefix = pPrefix;
       if( op==TK_VARIABLE ){
