@@ -1150,7 +1150,7 @@ extern "C" {
 */
 #define SQLITE_VERSION        "3.22.0"
 #define SQLITE_VERSION_NUMBER 3022000
-#define SQLITE_SOURCE_ID      "2018-01-20 15:48:45 136bf323e42dc90e1780199a381bcbb084b069eca5c7343ee6fc6e2550831536"
+#define SQLITE_SOURCE_ID      "2018-01-22 18:45:57 0c55d179733b46d8d0ba4d88e01a25e10677046ee3da1d5b1581e86726f2171d"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -60730,9 +60730,12 @@ SQLITE_API int sqlite3_enable_shared_cache(int enable){
 */
 #ifdef SQLITE_DEBUG
 int corruptPageError(int lineno, MemPage *p){
-  char *zMsg = sqlite3_mprintf("database corruption page %d of %s",
+  char *zMsg;
+  sqlite3BeginBenignMalloc();
+  zMsg = sqlite3_mprintf("database corruption page %d of %s",
       (int)p->pgno, sqlite3PagerFilename(p->pBt->pPager, 0)
   );
+  sqlite3EndBenignMalloc();
   if( zMsg ){
     sqlite3ReportError(SQLITE_CORRUPT, lineno, zMsg);
   }
@@ -203638,7 +203641,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2018-01-20 15:48:45 136bf323e42dc90e1780199a381bcbb084b069eca5c7343ee6fc6e2550831536", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2018-01-22 18:45:57 0c55d179733b46d8d0ba4d88e01a25e10677046ee3da1d5b1581e86726f2171d", -1, SQLITE_TRANSIENT);
 }
 
 static int fts5Init(sqlite3 *db){
@@ -207956,9 +207959,9 @@ SQLITE_API int sqlite3_extension_init(
 #endif /* !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_STMTVTAB) */
 
 /************** End of stmt.c ************************************************/
-#if __LINE__!=207959
+#if __LINE__!=207962
 #undef SQLITE_SOURCE_ID
-#define SQLITE_SOURCE_ID      "2018-01-20 15:48:45 136bf323e42dc90e1780199a381bcbb084b069eca5c7343ee6fc6e255083alt2"
+#define SQLITE_SOURCE_ID      "2018-01-22 18:45:57 0c55d179733b46d8d0ba4d88e01a25e10677046ee3da1d5b1581e86726f2alt2"
 #endif
 /* Return the source-id for this library */
 SQLITE_API const char *sqlite3_sourceid(void){ return SQLITE_SOURCE_ID; }
