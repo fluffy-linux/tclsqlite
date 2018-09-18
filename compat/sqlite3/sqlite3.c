@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.25.0.  By combining all the individual C code files into this
+** version 3.25.1.  By combining all the individual C code files into this
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -1160,9 +1160,9 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.25.0"
-#define SQLITE_VERSION_NUMBER 3025000
-#define SQLITE_SOURCE_ID      "2018-09-15 04:01:47 b63af6c3bd33152742648d5d2e8dc5d5fcbcdd27df409272b6aea00a6f761760"
+#define SQLITE_VERSION        "3.25.1"
+#define SQLITE_VERSION_NUMBER 3025001
+#define SQLITE_SOURCE_ID      "2018-09-17 15:25:21 36c75fd5b7cddb48be74f4f86fafe588b3e597a80d226eeb43b77cbd3817572e"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -102432,7 +102432,7 @@ static int renameResolveTrigger(Parse *pParse, const char *zDb){
       Table *pTarget = sqlite3LocateTable(pParse, 0, pStep->zTarget, zDb);
       if( pTarget==0 ){
         rc = SQLITE_ERROR;
-      }else{
+      }else if( SQLITE_OK==(rc = sqlite3ViewGetColumnNames(pParse, pTarget)) ){
         SrcList sSrc;
         memset(&sSrc, 0, sizeof(sSrc));
         sSrc.nSrc = 1;
@@ -108079,6 +108079,10 @@ SQLITE_PRIVATE int sqlite3ViewGetColumnNames(Parse *pParse, Table *pTable){
   assert( pTable->pSelect );
   pSel = sqlite3SelectDup(db, pTable->pSelect, 0);
   if( pSel ){
+#ifndef SQLITE_OMIT_ALTERTABLE
+    u8 eParseMode = pParse->eParseMode;
+    pParse->eParseMode = PARSE_MODE_NORMAL;
+#endif
     n = pParse->nTab;
     sqlite3SrcListAssignCursors(pParse, pSel->pSrc);
     pTable->nCol = -1;
@@ -108124,6 +108128,9 @@ SQLITE_PRIVATE int sqlite3ViewGetColumnNames(Parse *pParse, Table *pTable){
     sqlite3DeleteTable(db, pSelTab);
     sqlite3SelectDelete(db, pSel);
     db->lookaside.bDisable--;
+#ifndef SQLITE_OMIT_ALTERTABLE
+    pParse->eParseMode = eParseMode;
+#endif
   } else {
     nErr++;
   }
@@ -129442,6 +129449,7 @@ SQLITE_PRIVATE int sqlite3Select(
       sqlite3VdbeAddOp2(v, OP_Goto, 0, iBreak);
       sqlite3VdbeResolveLabel(v, addrGosub);
       VdbeNoopComment((v, "inner-loop subroutine"));
+      sSort.labelOBLopt = 0;
       selectInnerLoop(pParse, p, -1, &sSort, &sDistinct, pDest, iCont, iBreak);
       sqlite3VdbeResolveLabel(v, iCont);
       sqlite3VdbeAddOp1(v, OP_Return, regGosub);
@@ -214733,7 +214741,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2018-09-15 04:01:47 b63af6c3bd33152742648d5d2e8dc5d5fcbcdd27df409272b6aea00a6f761760", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2018-09-17 15:25:21 36c75fd5b7cddb48be74f4f86fafe588b3e597a80d226eeb43b77cbd3817572e", -1, SQLITE_TRANSIENT);
 }
 
 static int fts5Init(sqlite3 *db){
@@ -219558,9 +219566,9 @@ SQLITE_API int sqlite3_extension_init(
 #endif /* !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_STMTVTAB) */
 
 /************** End of stmt.c ************************************************/
-#if __LINE__!=219561
+#if __LINE__!=219569
 #undef SQLITE_SOURCE_ID
-#define SQLITE_SOURCE_ID      "2018-09-15 04:01:47 b63af6c3bd33152742648d5d2e8dc5d5fcbcdd27df409272b6aea00a6f76alt2"
+#define SQLITE_SOURCE_ID      "2018-09-17 15:25:21 36c75fd5b7cddb48be74f4f86fafe588b3e597a80d226eeb43b77cbd3817alt2"
 #endif
 /* Return the source-id for this library */
 SQLITE_API const char *sqlite3_sourceid(void){ return SQLITE_SOURCE_ID; }
