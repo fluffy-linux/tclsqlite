@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.25.1.  By combining all the individual C code files into this
+** version 3.25.2.  By combining all the individual C code files into this
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -1160,9 +1160,9 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.25.1"
-#define SQLITE_VERSION_NUMBER 3025001
-#define SQLITE_SOURCE_ID      "2018-09-18 20:20:44 2ac9003de44da7dafa3fbb1915ac5725a9275c86bf2f3b7aa19321bf1460b386"
+#define SQLITE_VERSION        "3.25.2"
+#define SQLITE_VERSION_NUMBER 3025002
+#define SQLITE_SOURCE_ID      "2018-09-27 13:22:44 c5a9fb87a825bd587c89c5c52d396f9061052b1694e72ff4b199b1b82d83eb92"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -16301,6 +16301,7 @@ struct sqlite3 {
 #define SQLITE_EnableQPSG     0x00800000  /* Query Planner Stability Guarantee*/
 #define SQLITE_TriggerEQP     0x01000000  /* Show trigger EXPLAIN QUERY PLAN */
 #define SQLITE_ResetDatabase  0x02000000  /* Reset the database */
+#define SQLITE_LegacyAlter    0x04000000  /* Legacy ALTER TABLE behaviour */
 
 /* Flags used only if debugging */
 #ifdef SQLITE_DEBUG
@@ -18790,6 +18791,7 @@ SQLITE_PRIVATE void sqlite3GenerateRowDelete(
 SQLITE_PRIVATE void sqlite3GenerateRowIndexDelete(Parse*, Table*, int, int, int*, int);
 SQLITE_PRIVATE int sqlite3GenerateIndexKey(Parse*, Index*, int, int, int, int*,Index*,int);
 SQLITE_PRIVATE void sqlite3ResolvePartIdxLabel(Parse*,int);
+SQLITE_PRIVATE int sqlite3ExprReferencesUpdatedColumn(Expr*,int*,int);
 SQLITE_PRIVATE void sqlite3GenerateConstraintChecks(Parse*,Table*,int*,int,int,int,int,
                                      u8,u8,int,int*,int*,Upsert*);
 #ifdef SQLITE_ENABLE_NULL_TRIM
@@ -32712,7 +32714,11 @@ static struct unix_syscall {
 #define osLstat      ((int(*)(const char*,struct stat*))aSyscall[27].pCurrent)
 
 #if defined(__linux__) && defined(SQLITE_ENABLE_BATCH_ATOMIC_WRITE)
+# ifdef __ANDROID__
+  { "ioctl", (sqlite3_syscall_ptr)(int(*)(int, int, ...))ioctl, 0 },
+# else
   { "ioctl",         (sqlite3_syscall_ptr)ioctl,          0 },
+# endif
 #else
   { "ioctl",         (sqlite3_syscall_ptr)0,              0 },
 #endif
@@ -89940,7 +89946,10 @@ case OP_VNext: {   /* jump */
 case OP_VRename: {
   sqlite3_vtab *pVtab;
   Mem *pName;
-
+  int isLegacy;
+  
+  isLegacy = (db->flags & SQLITE_LegacyAlter);
+  db->flags |= SQLITE_LegacyAlter;
   pVtab = pOp->p4.pVtab->pVtab;
   pName = &aMem[pOp->p1];
   assert( pVtab->pModule->xRename );
@@ -89954,6 +89963,7 @@ case OP_VRename: {
   rc = sqlite3VdbeChangeEncoding(pName, SQLITE_UTF8);
   if( rc ) goto abort_due_to_error;
   rc = pVtab->pModule->xRename(pVtab, pName->z);
+  if( isLegacy==0 ) db->flags &= ~SQLITE_LegacyAlter;
   sqlite3VtabImportErrmsg(p, pVtab);
   p->expired = 0;
   if( rc ) goto abort_due_to_error;
@@ -97274,16 +97284,13 @@ static Expr *exprDup(sqlite3 *db, Expr *p, int dupFlags, u8 **pzBuffer){
     }
 
     /* Fill in pNew->pLeft and pNew->pRight. */
+    zAlloc += dupedExprNodeSize(p, dupFlags);
     if( ExprHasProperty(pNew, EP_Reduced|EP_TokenOnly) ){
-      zAlloc += dupedExprNodeSize(p, dupFlags);
       if( !ExprHasProperty(pNew, EP_TokenOnly|EP_Leaf) ){
         pNew->pLeft = p->pLeft ?
                       exprDup(db, p->pLeft, EXPRDUP_REDUCE, &zAlloc) : 0;
         pNew->pRight = p->pRight ?
                        exprDup(db, p->pRight, EXPRDUP_REDUCE, &zAlloc) : 0;
-      }
-      if( pzBuffer ){
-        *pzBuffer = zAlloc;
       }
     }else{
 #ifndef SQLITE_OMIT_WINDOWFUNC
@@ -97303,6 +97310,9 @@ static Expr *exprDup(sqlite3 *db, Expr *p, int dupFlags, u8 **pzBuffer){
         }
         pNew->pRight = sqlite3ExprDup(db, p->pRight, 0);
       }
+    }
+    if( pzBuffer ){
+      *pzBuffer = zAlloc;
     }
   }
   return pNew;
@@ -100855,18 +100865,15 @@ SQLITE_PRIVATE int sqlite3ExprImpliesExpr(Parse *pParse, Expr *pE1, Expr *pE2, i
 /*
 ** This is the Expr node callback for sqlite3ExprImpliesNotNullRow().
 ** If the expression node requires that the table at pWalker->iCur
-** have a non-NULL column, then set pWalker->eCode to 1 and abort.
+** have one or more non-NULL column, then set pWalker->eCode to 1 and abort.
+**
+** This routine controls an optimization.  False positives (setting
+** pWalker->eCode to 1 when it should not be) are deadly, but false-negatives
+** (never setting pWalker->eCode) is a harmless missed optimization.
 */
 static int impliesNotNullRow(Walker *pWalker, Expr *pExpr){
-  /* This routine is only called for WHERE clause expressions and so it
-  ** cannot have any TK_AGG_COLUMN entries because those are only found
-  ** in HAVING clauses.  We can get a TK_AGG_FUNCTION in a WHERE clause,
-  ** but that is an illegal construct and the query will be rejected at
-  ** a later stage of processing, so the TK_AGG_FUNCTION case does not
-  ** need to be considered here. */
-  assert( pExpr->op!=TK_AGG_COLUMN );
+  testcase( pExpr->op==TK_AGG_COLUMN );
   testcase( pExpr->op==TK_AGG_FUNCTION );
-
   if( ExprHasProperty(pExpr, EP_FromJoin) ) return WRC_Prune;
   switch( pExpr->op ){
     case TK_ISNOT:
@@ -101525,20 +101532,6 @@ SQLITE_PRIVATE void sqlite3AlterRenameTable(
     goto exit_rename_table;
   }
 
-  /* If this is a virtual table, invoke the xRename() function if
-  ** one is defined. The xRename() callback will modify the names
-  ** of any resources used by the v-table implementation (including other
-  ** SQLite tables) that are identified by the name of the virtual table.
-  */
-#ifndef SQLITE_OMIT_VIRTUALTABLE
-  if( pVTab ){
-    int i = ++pParse->nMem;
-    sqlite3VdbeLoadString(v, i, zName);
-    sqlite3VdbeAddOp4(v, OP_VRename, i, 0, 0,(const char*)pVTab, P4_VTAB);
-    sqlite3MayAbort(pParse);
-  }
-#endif
-
   /* figure out how many UTF-8 characters are in zName */
   zTabName = pTab->zName;
   nTabName = sqlite3Utf8CharLen(zTabName, -1);
@@ -101595,6 +101588,20 @@ SQLITE_PRIVATE void sqlite3AlterRenameTable(
             "WHERE type IN ('view', 'trigger')"
         , zDb, zTabName, zName, zTabName, zDb, zName);
   }
+
+  /* If this is a virtual table, invoke the xRename() function if
+  ** one is defined. The xRename() callback will modify the names
+  ** of any resources used by the v-table implementation (including other
+  ** SQLite tables) that are identified by the name of the virtual table.
+  */
+#ifndef SQLITE_OMIT_VIRTUALTABLE
+  if( pVTab ){
+    int i = ++pParse->nMem;
+    sqlite3VdbeLoadString(v, i, zName);
+    sqlite3VdbeAddOp4(v, OP_VRename, i, 0, 0,(const char*)pVTab, P4_VTAB);
+    sqlite3MayAbort(pParse);
+  }
+#endif
 
   renameReloadSchema(pParse, iDb);
   renameTestSchema(pParse, zDb, iDb==1);
@@ -102778,17 +102785,20 @@ static void renameTableFunc(
     rc = renameParseSql(&sParse, zDb, 1, db, zInput, bTemp);
 
     if( rc==SQLITE_OK ){
+      int isLegacy = (db->flags & SQLITE_LegacyAlter);
       if( sParse.pNewTable ){
         Table *pTab = sParse.pNewTable;
 
         if( pTab->pSelect ){
-          NameContext sNC;
-          memset(&sNC, 0, sizeof(sNC));
-          sNC.pParse = &sParse;
+          if( isLegacy==0 ){
+            NameContext sNC;
+            memset(&sNC, 0, sizeof(sNC));
+            sNC.pParse = &sParse;
 
-          sqlite3SelectPrep(&sParse, pTab->pSelect, &sNC);
-          if( sParse.nErr ) rc = sParse.rc;
-          sqlite3WalkSelect(&sWalker, pTab->pSelect);
+            sqlite3SelectPrep(&sParse, pTab->pSelect, &sNC);
+            if( sParse.nErr ) rc = sParse.rc;
+            sqlite3WalkSelect(&sWalker, pTab->pSelect);
+          }
         }else{
           /* Modify any FK definitions to point to the new table. */
 #ifndef SQLITE_OMIT_FOREIGN_KEY
@@ -102807,7 +102817,9 @@ static void renameTableFunc(
           ** "CREATE [VIRTUAL] TABLE" bit. */
           if( sqlite3_stricmp(zOld, pTab->zName)==0 ){
             sCtx.pTab = pTab;
-            sqlite3WalkExprList(&sWalker, pTab->pCheck);
+            if( isLegacy==0 ){
+              sqlite3WalkExprList(&sWalker, pTab->pCheck);
+            }
             renameTokenFind(&sParse, &sCtx, pTab->zName);
           }
         }
@@ -102815,7 +102827,9 @@ static void renameTableFunc(
 
       else if( sParse.pNewIndex ){
         renameTokenFind(&sParse, &sCtx, sParse.pNewIndex->zName);
-        sqlite3WalkExpr(&sWalker, sParse.pNewIndex->pPartIdxWhere);
+        if( isLegacy==0 ){
+          sqlite3WalkExpr(&sWalker, sParse.pNewIndex->pPartIdxWhere);
+        }
       }
 
 #ifndef SQLITE_OMIT_TRIGGER
@@ -102828,12 +102842,14 @@ static void renameTableFunc(
           renameTokenFind(&sParse, &sCtx, sParse.pNewTrigger->table);
         }
 
-        rc = renameResolveTrigger(&sParse, bTemp ? 0 : zDb);
-        if( rc==SQLITE_OK ){
-          renameWalkTrigger(&sWalker, pTrigger);
-          for(pStep=pTrigger->step_list; pStep; pStep=pStep->pNext){
-            if( pStep->zTarget && 0==sqlite3_stricmp(pStep->zTarget, zOld) ){
-              renameTokenFind(&sParse, &sCtx, pStep->zTarget);
+        if( isLegacy==0 ){
+          rc = renameResolveTrigger(&sParse, bTemp ? 0 : zDb);
+          if( rc==SQLITE_OK ){
+            renameWalkTrigger(&sWalker, pTrigger);
+            for(pStep=pTrigger->step_list; pStep; pStep=pStep->pNext){
+              if( pStep->zTarget && 0==sqlite3_stricmp(pStep->zTarget, zOld) ){
+                renameTokenFind(&sParse, &sCtx, pStep->zTarget);
+              }
             }
           }
         }
@@ -102891,6 +102907,7 @@ static void renameTableTest(
   char const *zDb = (const char*)sqlite3_value_text(argv[0]);
   char const *zInput = (const char*)sqlite3_value_text(argv[1]);
   int bTemp = sqlite3_value_int(argv[4]);
+  int isLegacy = (db->flags & SQLITE_LegacyAlter);
 
 #ifndef SQLITE_OMIT_AUTHORIZATION
   sqlite3_xauth xAuth = db->xAuth;
@@ -102903,7 +102920,7 @@ static void renameTableTest(
     Parse sParse;
     rc = renameParseSql(&sParse, zDb, 1, db, zInput, bTemp);
     if( rc==SQLITE_OK ){
-      if( sParse.pNewTable && sParse.pNewTable->pSelect ){
+      if( isLegacy==0 && sParse.pNewTable && sParse.pNewTable->pSelect ){
         NameContext sNC;
         memset(&sNC, 0, sizeof(sNC));
         sNC.pParse = &sParse;
@@ -102912,7 +102929,9 @@ static void renameTableTest(
       }
 
       else if( sParse.pNewTrigger ){
-        rc = renameResolveTrigger(&sParse, bTemp ? 0 : zDb);
+        if( isLegacy==0 ){
+          rc = renameResolveTrigger(&sParse, bTemp ? 0 : zDb);
+        }
         if( rc==SQLITE_OK ){
           int i1 = sqlite3SchemaToIndex(db, sParse.pNewTrigger->pTabSchema);
           int i2 = sqlite3FindDbName(db, zDb);
@@ -107562,10 +107581,6 @@ static void convertToWithoutRowidTable(Parse *pParse, Table *pTab){
       }
     }
   }
-
-  /* The remaining transformations only apply to b-tree tables, not to
-  ** virtual tables */
-  if( IN_DECLARE_VTAB ) return;
 
   /* Convert the P3 operand of the OP_CreateBtree opcode from BTREE_INTKEY
   ** into BTREE_BLOBKEY.
@@ -116401,14 +116416,15 @@ insert_cleanup:
 #endif
 
 /*
-** Meanings of bits in of pWalker->eCode for checkConstraintUnchanged()
+** Meanings of bits in of pWalker->eCode for 
+** sqlite3ExprReferencesUpdatedColumn()
 */
 #define CKCNSTRNT_COLUMN   0x01    /* CHECK constraint uses a changing column */
 #define CKCNSTRNT_ROWID    0x02    /* CHECK constraint references the ROWID */
 
-/* This is the Walker callback from checkConstraintUnchanged().  Set
-** bit 0x01 of pWalker->eCode if
-** pWalker->eCode to 0 if this expression node references any of the
+/* This is the Walker callback from sqlite3ExprReferencesUpdatedColumn().
+*  Set bit 0x01 of pWalker->eCode if pWalker->eCode to 0 and if this
+** expression node references any of the
 ** columns that are being modifed by an UPDATE statement.
 */
 static int checkConstraintExprNode(Walker *pWalker, Expr *pExpr){
@@ -116430,12 +116446,21 @@ static int checkConstraintExprNode(Walker *pWalker, Expr *pExpr){
 ** only columns that are modified by the UPDATE are those for which
 ** aiChng[i]>=0, and also the ROWID is modified if chngRowid is true.
 **
-** Return true if CHECK constraint pExpr does not use any of the
+** Return true if CHECK constraint pExpr uses any of the
 ** changing columns (or the rowid if it is changing).  In other words,
-** return true if this CHECK constraint can be skipped when validating
+** return true if this CHECK constraint must be validated for
 ** the new row in the UPDATE statement.
+**
+** 2018-09-15: pExpr might also be an expression for an index-on-expressions.
+** The operation of this routine is the same - return true if an only if
+** the expression uses one or more of columns identified by the second and
+** third arguments.
 */
-static int checkConstraintUnchanged(Expr *pExpr, int *aiChng, int chngRowid){
+SQLITE_PRIVATE int sqlite3ExprReferencesUpdatedColumn(
+  Expr *pExpr,    /* The expression to be checked */
+  int *aiChng,    /* aiChng[x]>=0 if column x changed by the UPDATE */
+  int chngRowid   /* True if UPDATE changes the rowid */
+){
   Walker w;
   memset(&w, 0, sizeof(w));
   w.eCode = 0;
@@ -116450,7 +116475,7 @@ static int checkConstraintUnchanged(Expr *pExpr, int *aiChng, int chngRowid){
   testcase( w.eCode==CKCNSTRNT_COLUMN );
   testcase( w.eCode==CKCNSTRNT_ROWID );
   testcase( w.eCode==(CKCNSTRNT_ROWID|CKCNSTRNT_COLUMN) );
-  return !w.eCode;
+  return w.eCode!=0;
 }
 
 /*
@@ -116656,7 +116681,13 @@ SQLITE_PRIVATE void sqlite3GenerateConstraintChecks(
     for(i=0; i<pCheck->nExpr; i++){
       int allOk;
       Expr *pExpr = pCheck->a[i].pExpr;
-      if( aiChng && checkConstraintUnchanged(pExpr, aiChng, pkChng) ) continue;
+      if( aiChng
+       && !sqlite3ExprReferencesUpdatedColumn(pExpr, aiChng, pkChng)
+      ){
+        /* The check constraints do not reference any of the columns being
+        ** updated so there is no point it verifying the check constraint */
+        continue;
+      }
       allOk = sqlite3VdbeMakeLabel(v);
       sqlite3VdbeVerifyAbortable(v, onError);
       sqlite3ExprIfTrue(pParse, pExpr, allOk, SQLITE_JUMPIFNULL);
@@ -119728,6 +119759,11 @@ static const PragmaName aPragmaName[] = {
   /* iArg:      */ 0 },
 #endif
 #if !defined(SQLITE_OMIT_FLAG_PRAGMAS)
+ {/* zName:     */ "legacy_alter_table",
+  /* ePragTyp:  */ PragTyp_FLAG,
+  /* ePragFlg:  */ PragFlg_Result0|PragFlg_NoColumns1,
+  /* ColNames:  */ 0, 0,
+  /* iArg:      */ SQLITE_LegacyAlter },
  {/* zName:     */ "legacy_file_format",
   /* ePragTyp:  */ PragTyp_FLAG,
   /* ePragFlg:  */ PragFlg_Result0|PragFlg_NoColumns1,
@@ -119981,7 +120017,7 @@ static const PragmaName aPragmaName[] = {
   /* iArg:      */ SQLITE_WriteSchema },
 #endif
 };
-/* Number of pragmas: 60 on by default, 77 total. */
+/* Number of pragmas: 61 on by default, 78 total. */
 
 /************** End of pragma.h **********************************************/
 /************** Continuing where we left off in pragma.c *********************/
@@ -125680,6 +125716,13 @@ static void generateWithRecursiveQuery(
   ExprList *pOrderBy;           /* The ORDER BY clause */
   Expr *pLimit;                 /* Saved LIMIT and OFFSET */
   int regLimit, regOffset;      /* Registers used by LIMIT and OFFSET */
+
+#ifndef SQLITE_OMIT_WINDOWFUNC
+  if( p->pWin ){
+    sqlite3ErrorMsg(pParse, "cannot use window functions in recursive queries");
+    return;
+  }
+#endif
 
   /* Obtain authorization to do a recursive query */
   if( sqlite3AuthCheck(pParse, SQLITE_RECURSIVE, 0, 0, 0) ) return;
@@ -131431,6 +131474,57 @@ SQLITE_PRIVATE void sqlite3ColumnDefault(Vdbe *v, Table *pTab, int i, int iReg){
 }
 
 /*
+** Check to see if column iCol of index pIdx references any of the
+** columns defined by aXRef and chngRowid.  Return true if it does
+** and false if not.  This is an optimization.  False-positives are a
+** performance degradation, but false-negatives can result in a corrupt
+** index and incorrect answers.
+**
+** aXRef[j] will be non-negative if column j of the original table is
+** being updated.  chngRowid will be true if the rowid of the table is
+** being updated.
+*/
+static int indexColumnIsBeingUpdated(
+  Index *pIdx,      /* The index to check */
+  int iCol,         /* Which column of the index to check */
+  int *aXRef,       /* aXRef[j]>=0 if column j is being updated */
+  int chngRowid     /* true if the rowid is being updated */
+){
+  i16 iIdxCol = pIdx->aiColumn[iCol];
+  assert( iIdxCol!=XN_ROWID ); /* Cannot index rowid */
+  if( iIdxCol>=0 ){
+    return aXRef[iIdxCol]>=0;
+  }
+  assert( iIdxCol==XN_EXPR );
+  assert( pIdx->aColExpr!=0 );
+  assert( pIdx->aColExpr->a[iCol].pExpr!=0 );
+  return sqlite3ExprReferencesUpdatedColumn(pIdx->aColExpr->a[iCol].pExpr,
+                                            aXRef,chngRowid);
+}
+
+/*
+** Check to see if index pIdx is a partial index whose conditional
+** expression might change values due to an UPDATE.  Return true if
+** the index is subject to change and false if the index is guaranteed
+** to be unchanged.  This is an optimization.  False-positives are a
+** performance degradation, but false-negatives can result in a corrupt
+** index and incorrect answers.
+**
+** aXRef[j] will be non-negative if column j of the original table is
+** being updated.  chngRowid will be true if the rowid of the table is
+** being updated.
+*/
+static int indexWhereClauseMightChange(
+  Index *pIdx,      /* The index to check */
+  int *aXRef,       /* aXRef[j]>=0 if column j is being updated */
+  int chngRowid     /* true if the rowid is being updated */
+){
+  if( pIdx->pPartIdxWhere==0 ) return 0;
+  return sqlite3ExprReferencesUpdatedColumn(pIdx->pPartIdxWhere,
+                                            aXRef, chngRowid);
+}
+
+/*
 ** Process an UPDATE statement.
 **
 **   UPDATE OR IGNORE table_wxyz SET a=b, c=d WHERE e<5 AND f NOT NULL;
@@ -131658,19 +131752,18 @@ SQLITE_PRIVATE void sqlite3Update(
   /* There is one entry in the aRegIdx[] array for each index on the table
   ** being updated.  Fill in aRegIdx[] with a register number that will hold
   ** the key for accessing each index.
-  **
-  ** FIXME:  Be smarter about omitting indexes that use expressions.
   */
   for(j=0, pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext, j++){
     int reg;
-    if( chngKey || hasFK>1 || pIdx->pPartIdxWhere || pIdx==pPk ){
+    if( chngKey || hasFK>1 || pIdx==pPk
+     || indexWhereClauseMightChange(pIdx,aXRef,chngRowid)
+    ){
       reg = ++pParse->nMem;
       pParse->nMem += pIdx->nColumn;
     }else{
       reg = 0;
       for(i=0; i<pIdx->nKeyCol; i++){
-        i16 iIdxCol = pIdx->aiColumn[i];
-        if( iIdxCol<0 || aXRef[iIdxCol]>=0 ){
+        if( indexColumnIsBeingUpdated(pIdx, i, aXRef, chngRowid) ){
           reg = ++pParse->nMem;
           pParse->nMem += pIdx->nColumn;
           if( (onError==OE_Replace)
@@ -155031,6 +155124,7 @@ static int openDatabase(
   db->nDb = 2;
   db->magic = SQLITE_MAGIC_BUSY;
   db->aDb = db->aDbStatic;
+  db->lookaside.bDisable = 1;
 
   assert( sizeof(db->aLimit)==sizeof(aHardLimit) );
   memcpy(db->aLimit, aHardLimit, sizeof(db->aLimit));
@@ -214741,7 +214835,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2018-09-18 20:20:44 2ac9003de44da7dafa3fbb1915ac5725a9275c86bf2f3b7aa19321bf1460b386", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2018-09-27 13:22:44 c5a9fb87a825bd587c89c5c52d396f9061052b1694e72ff4b199b1b82d83eb92", -1, SQLITE_TRANSIENT);
 }
 
 static int fts5Init(sqlite3 *db){
@@ -219566,9 +219660,9 @@ SQLITE_API int sqlite3_extension_init(
 #endif /* !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_STMTVTAB) */
 
 /************** End of stmt.c ************************************************/
-#if __LINE__!=219569
+#if __LINE__!=219663
 #undef SQLITE_SOURCE_ID
-#define SQLITE_SOURCE_ID      "2018-09-18 20:20:44 2ac9003de44da7dafa3fbb1915ac5725a9275c86bf2f3b7aa19321bf1460alt2"
+#define SQLITE_SOURCE_ID      "2018-09-27 13:22:44 c5a9fb87a825bd587c89c5c52d396f9061052b1694e72ff4b199b1b82d83alt2"
 #endif
 /* Return the source-id for this library */
 SQLITE_API const char *sqlite3_sourceid(void){ return SQLITE_SOURCE_ID; }
