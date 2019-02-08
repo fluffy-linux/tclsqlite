@@ -167794,7 +167794,7 @@ static void testFunc(
   }
 
   while( SQLITE_OK==p->xNext(pCsr, &zToken, &nToken, &iStart, &iEnd, &iPos) ){
-    Tcl_ListObjAppendElement(0, pRet, Tcl_NewIntObj(iPos));
+    Tcl_ListObjAppendElement(0, pRet, Tcl_NewWideIntObj(iPos));
     Tcl_ListObjAppendElement(0, pRet, Tcl_NewStringObj(zToken, nToken));
     zToken = &zInput[iStart];
     nToken = iEnd-iStart;
