@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.27.1.  By combining all the individual C code files into this
+** version 3.27.2.  By combining all the individual C code files into this
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -1163,8 +1163,8 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.27.1"
-#define SQLITE_VERSION_NUMBER 3027001
+#define SQLITE_VERSION        "3.27.2"
+#define SQLITE_VERSION_NUMBER 3027002
 #define SQLITE_SOURCE_ID      "2019-02-08 13:17:39 0eca3dd3d38b31c92b49ca2d311128b74584714d9e7de895b1a6286ef959a1dd"
 
 /*
@@ -58358,7 +58358,7 @@ SQLITE_PRIVATE int sqlite3PagerSnapshotCheck(Pager *pPager, sqlite3_snapshot *pS
 */
 SQLITE_PRIVATE void sqlite3PagerSnapshotUnlock(Pager *pPager){
   assert( pPager->pWal );
-  return sqlite3WalSnapshotUnlock(pPager->pWal);
+  sqlite3WalSnapshotUnlock(pPager->pWal);
 }
 
 #endif /* SQLITE_ENABLE_SNAPSHOT */
@@ -96636,6 +96636,7 @@ static int resolveSelectStep(Walker *pWalker, Select *p){
       }
     }
 
+#ifndef SQLITE_OMIT_WINDOWFUNC
     if( IN_RENAME_OBJECT ){
       Window *pWin;
       for(pWin=p->pWinDefn; pWin; pWin=pWin->pNextWin){
@@ -96646,6 +96647,7 @@ static int resolveSelectStep(Walker *pWalker, Select *p){
         }
       }
     }
+#endif
 
     /* If this is part of a compound SELECT, check that it has the right
     ** number of expressions in the select list. */
@@ -137440,6 +137442,7 @@ SQLITE_PRIVATE Bitmask sqlite3WhereCodeOneLoopStart(
     sqlite3VdbeAddOp3(v, OP_SeekRowid, iCur, addrNxt, iRowidReg);
     VdbeCoverage(v);
     pLevel->op = OP_Noop;
+    pTerm->wtFlags |= TERM_CODED;
   }else if( (pLoop->wsFlags & WHERE_IPK)!=0
          && (pLoop->wsFlags & WHERE_COLUMN_RANGE)!=0
   ){
@@ -159335,10 +159338,10 @@ SQLITE_PRIVATE Fts3HashElem *sqlite3Fts3HashFindElem(const Fts3Hash *, const voi
 
 
 #ifndef MIN
-# define MIN(x,y) ((x)<(y)?(x):(y))
+# define MIN(A,B) ((A)<(B)?(A):(B))
 #endif
 #ifndef MAX
-# define MAX(x,y) ((x)>(y)?(x):(y))
+# define MAX(A,B) ((A)>(B)?(A):(B))
 #endif
 
 /*
@@ -160413,10 +160416,10 @@ static void fts3Appendf(
 ** memory.
 */
 static char *fts3QuoteId(char const *zInput){
-  sqlite3_int64 nRet;
+  size_t nRet;
   char *zRet;
-  nRet = 2 + (int)strlen(zInput)*2 + 1;
-  zRet = sqlite3_malloc64(nRet);
+  nRet = 2 + strlen(zInput)*2 + 1;
+  zRet = sqlite3_malloc(nRet);
   if( zRet ){
     int i;
     char *z = zRet;
@@ -160597,7 +160600,7 @@ static int fts3PrefixParameter(
     }
   }
 
-  aIndex = sqlite3_malloc64(sizeof(struct Fts3Index) * nIndex);
+  aIndex = sqlite3_malloc(sizeof(struct Fts3Index) * nIndex);
   *apIndex = aIndex;
   if( !aIndex ){
     return SQLITE_NOMEM;
@@ -160690,7 +160693,7 @@ static int fts3ContentColumns(
     }
 
     /* Allocate and populate the array to return. */
-    azCol = (const char **)sqlite3_malloc64(sizeof(char *) * nCol + nStr);
+    azCol = (const char **)sqlite3_malloc(sizeof(char *) * nCol + nStr);
     if( azCol==0 ){
       rc = SQLITE_NOMEM;
     }else{
@@ -160738,7 +160741,7 @@ static int fts3InitVtab(
   Fts3Table *p = 0;               /* Pointer to allocated vtab */
   int rc = SQLITE_OK;             /* Return code */
   int i;                          /* Iterator variable */
-  sqlite3_int64 nByte;            /* Size of allocation used for *p */
+  size_t nByte;                   /* Size of allocation used for *p */
   int iCol;                       /* Column index */
   int nString = 0;                /* Bytes required to hold all column names */
   int nCol = 0;                   /* Number of columns in the FTS table */
@@ -160772,10 +160775,10 @@ static int fts3InitVtab(
   nName = (int)strlen(argv[2]) + 1;
 
   nByte = sizeof(const char *) * (argc-2);
-  aCol = (const char **)sqlite3_malloc64(nByte);
+  aCol = (const char **)sqlite3_malloc(nByte);
   if( aCol ){
     memset((void*)aCol, 0, nByte);
-    azNotindexed = (char **)sqlite3_malloc64(nByte);
+    azNotindexed = (char **)sqlite3_malloc(nByte);
   }
   if( azNotindexed ){
     memset(azNotindexed, 0, nByte);
@@ -160970,7 +160973,7 @@ static int fts3InitVtab(
           nName +                              /* zName */
           nDb +                                /* zDb */
           nString;                             /* Space for azColumn strings */
-  p = (Fts3Table*)sqlite3_malloc64(nByte);
+  p = (Fts3Table*)sqlite3_malloc(nByte);
   if( p==0 ){
     rc = SQLITE_NOMEM;
     goto fts3_init_out;
@@ -162157,7 +162160,7 @@ static int fts3DoclistOrMerge(
   ** A symetric argument may be made if the doclists are in descending 
   ** order.
   */
-  aOut = sqlite3_malloc64((i64)n1+n2+FTS3_VARINT_MAX-1+FTS3_BUFFER_PADDING);
+  aOut = sqlite3_malloc((size_t)n1+n2+FTS3_VARINT_MAX-1+FTS3_BUFFER_PADDING);
   if( !aOut ) return SQLITE_NOMEM;
 
   p = aOut;
@@ -162227,7 +162230,7 @@ static int fts3DoclistPhraseMerge(
 
   assert( nDist>0 );
   if( bDescDoclist ){
-    aOut = sqlite3_malloc64((sqlite3_int64)*pnRight + FTS3_VARINT_MAX);
+    aOut = sqlite3_malloc((size_t)*pnRight + FTS3_VARINT_MAX);
     if( aOut==0 ) return SQLITE_NOMEM;
   }else{
     aOut = aRight;
@@ -164639,7 +164642,7 @@ static int fts3EvalStart(Fts3Cursor *pCsr){
   if( rc==SQLITE_OK && nToken>1 && pTab->bFts4 ){
     Fts3TokenAndCost *aTC;
     Fts3Expr **apOr;
-    aTC = (Fts3TokenAndCost *)sqlite3_malloc64(
+    aTC = (Fts3TokenAndCost *)sqlite3_malloc(
         sizeof(Fts3TokenAndCost) * nToken
       + sizeof(Fts3Expr *) * nOr * 2
     );
@@ -164950,7 +164953,7 @@ static int fts3EvalNearTest(Fts3Expr *pExpr, int *pRc){
    && (pExpr->pParent==0 || pExpr->pParent->eType!=FTSQUERY_NEAR)
   ){
     Fts3Expr *p; 
-    sqlite3_int64 nTmp = 0;       /* Bytes of temp space */
+    size_t nTmp = 0;              /* Bytes of temp space */
     char *aTmp;                   /* Temp space for PoslistNearMerge() */
 
     /* Allocate temporary working space. */
@@ -164959,7 +164962,7 @@ static int fts3EvalNearTest(Fts3Expr *pExpr, int *pRc){
       nTmp += p->pRight->pPhrase->doclist.nList;
     }
     nTmp += p->pPhrase->doclist.nList;
-    aTmp = sqlite3_malloc64(nTmp*2);
+    aTmp = sqlite3_malloc(nTmp*2);
     if( !aTmp ){
       *pRc = SQLITE_NOMEM;
       res = 0;
@@ -165300,7 +165303,7 @@ static int fts3EvalGatherStats(
     for(p=pRoot; p; p=p->pLeft){
       Fts3Expr *pE = (p->eType==FTSQUERY_PHRASE?p:p->pRight);
       assert( pE->aMI==0 );
-      pE->aMI = (u32 *)sqlite3_malloc64(pTab->nColumn * 3 * sizeof(u32));
+      pE->aMI = (u32 *)sqlite3_malloc(pTab->nColumn * 3 * sizeof(u32));
       if( !pE->aMI ) return SQLITE_NOMEM;
       memset(pE->aMI, 0, pTab->nColumn * 3 * sizeof(u32));
     }
@@ -165676,7 +165679,7 @@ static int fts3auxConnectMethod(
   char const *zFts3;              /* Name of fts3 table */
   int nDb;                        /* Result of strlen(zDb) */
   int nFts3;                      /* Result of strlen(zFts3) */
-  sqlite3_int64 nByte;            /* Bytes of space to allocate here */
+  size_t nByte;                   /* Bytes of space to allocate here */
   int rc;                         /* value returned by declare_vtab() */
   Fts3auxTable *p;                /* Virtual table object to return */
 
@@ -165708,7 +165711,7 @@ static int fts3auxConnectMethod(
   if( rc!=SQLITE_OK ) return rc;
 
   nByte = sizeof(Fts3auxTable) + sizeof(Fts3Table) + nDb + nFts3 + 2;
-  p = (Fts3auxTable *)sqlite3_malloc64(nByte);
+  p = (Fts3auxTable *)sqlite3_malloc(nByte);
   if( !p ) return SQLITE_NOMEM;
   memset(p, 0, nByte);
 
@@ -166286,8 +166289,8 @@ static int fts3isspace(char c){
 ** zero the memory before returning a pointer to it. If unsuccessful, 
 ** return NULL.
 */
-static void *fts3MallocZero(sqlite3_int64 nByte){
-  void *pRet = sqlite3_malloc64(nByte);
+static void *fts3MallocZero(size_t nByte){
+  void *pRet = sqlite3_malloc(nByte);
   if( pRet ) memset(pRet, 0, nByte);
   return pRet;
 }
@@ -166959,7 +166962,7 @@ static int fts3ExprBalance(Fts3Expr **pp, int nMaxDepth){
   if( rc==SQLITE_OK ){
     if( (eType==FTSQUERY_AND || eType==FTSQUERY_OR) ){
       Fts3Expr **apLeaf;
-      apLeaf = (Fts3Expr **)sqlite3_malloc64(sizeof(Fts3Expr *) * nMaxDepth);
+      apLeaf = (Fts3Expr **)sqlite3_malloc(sizeof(Fts3Expr *) * nMaxDepth);
       if( 0==apLeaf ){
         rc = SQLITE_NOMEM;
       }else{
@@ -167379,7 +167382,7 @@ static void fts3ExprTestCommon(
   zExpr = (const char *)sqlite3_value_text(argv[1]);
   nExpr = sqlite3_value_bytes(argv[1]);
   nCol = argc-2;
-  azCol = (char **)sqlite3_malloc64(nCol*sizeof(char *));
+  azCol = (char **)sqlite3_malloc(nCol*sizeof(char *));
   if( !azCol ){
     sqlite3_result_error_nomem(context);
     goto exprtest_out;
@@ -167493,8 +167496,8 @@ SQLITE_PRIVATE int sqlite3Fts3ExprInitTestInterface(sqlite3 *db, Fts3Hash *pHash
 /*
 ** Malloc and Free functions
 */
-static void *fts3HashMalloc(sqlite3_int64 n){
-  void *p = sqlite3_malloc64(n);
+static void *fts3HashMalloc(size_t n){
+  void *p = sqlite3_malloc(n);
   if( p ){
     memset(p, 0, n);
   }
@@ -169380,14 +169383,14 @@ static int fts3tokDequoteArray(
     *pazDequote = 0;
   }else{
     int i;
-    int nByte = 0;
+    size_t nByte = 0;
     char **azDequote;
 
     for(i=0; i<argc; i++){
-      nByte += (int)(strlen(argv[i]) + 1);
+      nByte += strlen(argv[i]) + 1;
     }
 
-    *pazDequote = azDequote = sqlite3_malloc64(sizeof(char *)*argc + nByte);
+    *pazDequote = azDequote = sqlite3_malloc(sizeof(char *)*argc + nByte);
     if( azDequote==0 ){
       rc = SQLITE_NOMEM;
     }else{
@@ -175613,7 +175616,7 @@ static void (*fts3MIBufferAlloc(MatchinfoBuffer *p, u32 **paOut))(void*){
     aOut = &p->aMatchinfo[p->nElem+2];
     xRet = fts3MIBufferFree;
   }else{
-    aOut = (u32*)sqlite3_malloc64(p->nElem * sizeof(u32));
+    aOut = (u32*)sqlite3_malloc(p->nElem * sizeof(u32));
     if( aOut ){
       xRet = sqlite3_free;
       if( p->bGlobal ) memcpy(aOut, &p->aMatchinfo[1], p->nElem*sizeof(u32));
@@ -175973,7 +175976,7 @@ static int fts3BestSnippet(
   ** the required space using malloc().
   */
   nByte = sizeof(SnippetPhrase) * nList;
-  sIter.aPhrase = (SnippetPhrase *)sqlite3_malloc64(nByte);
+  sIter.aPhrase = (SnippetPhrase *)sqlite3_malloc(nByte);
   if( !sIter.aPhrase ){
     return SQLITE_NOMEM;
   }
@@ -176566,7 +176569,7 @@ static int fts3MatchinfoLcs(Fts3Cursor *pCsr, MatchInfo *pInfo){
   /* Allocate and populate the array of LcsIterator objects. The array
   ** contains one element for each matchable phrase in the query.
   **/
-  aIter = sqlite3_malloc64(sizeof(LcsIterator) * pCsr->nPhrase);
+  aIter = sqlite3_malloc(sizeof(LcsIterator) * pCsr->nPhrase);
   if( !aIter ) return SQLITE_NOMEM;
   memset(aIter, 0, sizeof(LcsIterator) * pCsr->nPhrase);
   (void)fts3ExprIterate(pCsr->pExpr, fts3MatchinfoLcsCb, (void*)aIter);
@@ -177019,7 +177022,7 @@ SQLITE_PRIVATE void sqlite3Fts3Offsets(
   if( rc!=SQLITE_OK ) goto offsets_out;
 
   /* Allocate the array of TermOffset iterators. */
-  sCtx.aTerm = (TermOffset *)sqlite3_malloc64(sizeof(TermOffset)*nToken);
+  sCtx.aTerm = (TermOffset *)sqlite3_malloc(sizeof(TermOffset)*nToken);
   if( 0==sCtx.aTerm ){
     rc = SQLITE_NOMEM;
     goto offsets_out;
@@ -177647,60 +177650,61 @@ SQLITE_PRIVATE int sqlite3FtsUnicodeIsalnum(int c){
     0x00845001, 0x00845803, 0x00847806, 0x00849401, 0x00849C01,
     0x0084A401, 0x0084B801, 0x0084E802, 0x00850005, 0x00852804,
     0x00853C01, 0x00862802, 0x00864297, 0x0091000B, 0x0092704E,
-    0x00940276, 0x009E53E0, 0x00ADD820, 0x00AE6031, 0x00AF2835,
-    0x00B39406, 0x00B3BC03, 0x00B3E404, 0x00B3F802, 0x00B5C001,
-    0x00B5FC01, 0x00B7804F, 0x00B8C01F, 0x00BA001A, 0x00BA6C59,
-    0x00BC00D6, 0x00BFC00C, 0x00C00005, 0x00C02019, 0x00C0A807,
-    0x00C0D802, 0x00C0F403, 0x00C26404, 0x00C28001, 0x00C3EC01,
-    0x00C64002, 0x00C6580A, 0x00C70024, 0x00C8001F, 0x00C8A81E,
-    0x00C94001, 0x00C98020, 0x00CA2827, 0x00CB003F, 0x00CC0100,
-    0x01370040, 0x02924037, 0x0293F802, 0x02983403, 0x0299BC10,
-    0x029A7802, 0x029BC008, 0x029C0017, 0x029C8002, 0x029E2402,
-    0x02A00801, 0x02A01801, 0x02A02C01, 0x02A08C09, 0x02A0D804,
-    0x02A1D004, 0x02A20002, 0x02A2D012, 0x02A33802, 0x02A38012,
-    0x02A3E003, 0x02A3F001, 0x02A3FC01, 0x02A4980A, 0x02A51C0D,
-    0x02A57C01, 0x02A60004, 0x02A6CC1B, 0x02A77802, 0x02A79401,
-    0x02A8A40E, 0x02A90C01, 0x02A93002, 0x02A97004, 0x02A9DC03,
-    0x02A9EC03, 0x02AAC001, 0x02AAC803, 0x02AADC02, 0x02AAF802,
-    0x02AB0401, 0x02AB7802, 0x02ABAC07, 0x02ABD402, 0x02AD6C01,
-    0x02AF8C0B, 0x03600001, 0x036DFC02, 0x036FFC02, 0x037FFC01,
-    0x03EC7801, 0x03ECA401, 0x03EEC810, 0x03F4F802, 0x03F7F002,
-    0x03F8001A, 0x03F88033, 0x03F95013, 0x03F9A004, 0x03FBFC01,
-    0x03FC040F, 0x03FC6807, 0x03FCEC06, 0x03FD6C0B, 0x03FF8007,
-    0x03FFA007, 0x03FFE405, 0x04040003, 0x0404DC09, 0x0405E411,
-    0x04063003, 0x0406400C, 0x04068001, 0x0407402E, 0x040B8001,
-    0x040DD805, 0x040E7C01, 0x040F4001, 0x0415BC01, 0x04215C01,
-    0x0421DC02, 0x04247C01, 0x0424FC01, 0x04280403, 0x04281402,
-    0x04283004, 0x0428E003, 0x0428FC01, 0x04294009, 0x0429FC01,
-    0x042B2001, 0x042B9402, 0x042BC007, 0x042CE407, 0x042E6404,
-    0x04349004, 0x043D180B, 0x043D5405, 0x04400003, 0x0440E016,
-    0x0441FC04, 0x0442C012, 0x04433401, 0x04440003, 0x04449C0E,
-    0x04450004, 0x04451402, 0x0445CC03, 0x04460003, 0x0446CC0E,
-    0x04471409, 0x04476C01, 0x04477403, 0x0448B013, 0x044AA401,
-    0x044B7C0C, 0x044C0004, 0x044CEC02, 0x044CF807, 0x044D1C02,
-    0x044D2C03, 0x044D5C01, 0x044D8802, 0x044D9807, 0x044DC005,
-    0x0450D412, 0x04512C05, 0x04516C01, 0x04517402, 0x0452C014,
-    0x04531801, 0x0456BC07, 0x0456E020, 0x04577002, 0x0458C014,
-    0x0459800D, 0x045AAC0D, 0x045C740F, 0x045CF004, 0x0460B010,
-    0x0468040A, 0x0468CC07, 0x0468EC0D, 0x0469440B, 0x046A2813,
-    0x046A7805, 0x0470BC08, 0x0470E008, 0x04710405, 0x0471C002,
-    0x04724816, 0x0472A40E, 0x0474C406, 0x0474E801, 0x0474F002,
-    0x0474FC07, 0x04751C01, 0x04762805, 0x04764002, 0x04764C05,
-    0x047BCC06, 0x0491C005, 0x05A9B802, 0x05ABC006, 0x05ACC010,
-    0x05AD1002, 0x05BA5C04, 0x05BD442E, 0x05BE3C04, 0x06F27008,
-    0x074000F6, 0x07440027, 0x0744A4C0, 0x07480046, 0x074C0057,
-    0x075B0401, 0x075B6C01, 0x075BEC01, 0x075C5401, 0x075CD401,
-    0x075D3C01, 0x075DBC01, 0x075E2401, 0x075EA401, 0x075F0C01,
-    0x0760028C, 0x076A6C05, 0x076A840F, 0x07800007, 0x07802011,
-    0x07806C07, 0x07808C02, 0x07809805, 0x07A34007, 0x07A51007,
-    0x07A57802, 0x07B2B001, 0x07B2C001, 0x07BBC002, 0x07C0002C,
-    0x07C0C064, 0x07C2800F, 0x07C2C40F, 0x07C3040F, 0x07C34425,
-    0x07C4405C, 0x07C5C03D, 0x07C7981D, 0x07C8402C, 0x07C90009,
-    0x07C94002, 0x07C98006, 0x07CC03D5, 0x07DB800D, 0x07DBC00A,
-    0x07DC0074, 0x07DE0059, 0x07E0000C, 0x07E04038, 0x07E1400A,
-    0x07E18028, 0x07E2401E, 0x07E4000C, 0x07E4402F, 0x07E50031,
-    0x07E5CC04, 0x07E5E801, 0x07E5F027, 0x07E6C00A, 0x07E70003,
-    0x07E74030, 0x07E9800E, 0x38000401, 0x38008060, 0x380400F0,
+    0x00940276, 0x009E53E0, 0x00ADD820, 0x00AE6068, 0x00B39406,
+    0x00B3BC03, 0x00B3E404, 0x00B3F802, 0x00B5C001, 0x00B5FC01,
+    0x00B7804F, 0x00B8C020, 0x00BA001A, 0x00BA6C59, 0x00BC00D6,
+    0x00BFC00C, 0x00C00005, 0x00C02019, 0x00C0A807, 0x00C0D802,
+    0x00C0F403, 0x00C26404, 0x00C28001, 0x00C3EC01, 0x00C64002,
+    0x00C6580A, 0x00C70024, 0x00C8001F, 0x00C8A81E, 0x00C94001,
+    0x00C98020, 0x00CA2827, 0x00CB003F, 0x00CC0100, 0x01370040,
+    0x02924037, 0x0293F802, 0x02983403, 0x0299BC10, 0x029A7802,
+    0x029BC008, 0x029C0017, 0x029C8002, 0x029E2402, 0x02A00801,
+    0x02A01801, 0x02A02C01, 0x02A08C09, 0x02A0D804, 0x02A1D004,
+    0x02A20002, 0x02A2D012, 0x02A33802, 0x02A38012, 0x02A3E003,
+    0x02A3F001, 0x02A3FC01, 0x02A4980A, 0x02A51C0D, 0x02A57C01,
+    0x02A60004, 0x02A6CC1B, 0x02A77802, 0x02A79401, 0x02A8A40E,
+    0x02A90C01, 0x02A93002, 0x02A97004, 0x02A9DC03, 0x02A9EC03,
+    0x02AAC001, 0x02AAC803, 0x02AADC02, 0x02AAF802, 0x02AB0401,
+    0x02AB7802, 0x02ABAC07, 0x02ABD402, 0x02AD6C01, 0x02AF8C0B,
+    0x03600001, 0x036DFC02, 0x036FFC02, 0x037FFC01, 0x03EC7801,
+    0x03ECA401, 0x03EEC810, 0x03F4F802, 0x03F7F002, 0x03F8001A,
+    0x03F88033, 0x03F95013, 0x03F9A004, 0x03FBFC01, 0x03FC040F,
+    0x03FC6807, 0x03FCEC06, 0x03FD6C0B, 0x03FF8007, 0x03FFA007,
+    0x03FFE405, 0x04040003, 0x0404DC09, 0x0405E411, 0x04063003,
+    0x0406400C, 0x04068001, 0x0407402E, 0x040B8001, 0x040DD805,
+    0x040E7C01, 0x040F4001, 0x0415BC01, 0x04215C01, 0x0421DC02,
+    0x04247C01, 0x0424FC01, 0x04280403, 0x04281402, 0x04283004,
+    0x0428E003, 0x0428FC01, 0x04294009, 0x0429FC01, 0x042B2001,
+    0x042B9402, 0x042BC007, 0x042CE407, 0x042E6404, 0x04349004,
+    0x043D180B, 0x043D5405, 0x04400003, 0x0440E016, 0x0441FC04,
+    0x0442C012, 0x04433401, 0x04440003, 0x04449C0E, 0x04450004,
+    0x04451402, 0x0445CC03, 0x04460003, 0x0446CC0E, 0x04471409,
+    0x04476C01, 0x04477403, 0x0448B013, 0x044AA401, 0x044B7C0C,
+    0x044C0004, 0x044CEC02, 0x044CF807, 0x044D1C02, 0x044D2C03,
+    0x044D5C01, 0x044D8802, 0x044D9807, 0x044DC005, 0x0450D412,
+    0x04512C05, 0x04516C01, 0x04517402, 0x0452C014, 0x04531801,
+    0x0456BC07, 0x0456E020, 0x04577002, 0x0458C014, 0x0459800D,
+    0x045AAC0D, 0x045C740F, 0x045CF004, 0x0460B010, 0x0468040A,
+    0x0468CC07, 0x0468EC0D, 0x0469440B, 0x046A2813, 0x046A7805,
+    0x0470BC08, 0x0470E008, 0x04710405, 0x0471C002, 0x04724816,
+    0x0472A40E, 0x0474C406, 0x0474E801, 0x0474F002, 0x0474FC07,
+    0x04751C01, 0x04762805, 0x04764002, 0x04764C05, 0x047BCC06,
+    0x0491C005, 0x05A9B802, 0x05ABC006, 0x05ACC010, 0x05AD1002,
+    0x05BA5C04, 0x05BD442E, 0x05BE3C04, 0x06F27008, 0x074000F6,
+    0x07440027, 0x0744A4C0, 0x07480046, 0x074C0057, 0x075B0401,
+    0x075B6C01, 0x075BEC01, 0x075C5401, 0x075CD401, 0x075D3C01,
+    0x075DBC01, 0x075E2401, 0x075EA401, 0x075F0C01, 0x0760028C,
+    0x076A6C05, 0x076A840F, 0x07800007, 0x07802011, 0x07806C07,
+    0x07808C02, 0x07809805, 0x07A34007, 0x07A51007, 0x07A57802,
+    0x07B2B001, 0x07B2C001, 0x07BBC002, 0x07C0002C, 0x07C0C064,
+    0x07C2800F, 0x07C2C40F, 0x07C3040F, 0x07C34425, 0x07C4405D,
+    0x07C5C03D, 0x07C7981D, 0x07C8402C, 0x07C90009, 0x07C94002,
+    0x07C98006, 0x07CC03D6, 0x07DB800D, 0x07DBC00B, 0x07DC0074,
+    0x07DE0059, 0x07DF800C, 0x07E0000C, 0x07E04038, 0x07E1400A,
+    0x07E18028, 0x07E2401E, 0x07E4000C, 0x07E43465, 0x07E5CC04,
+    0x07E5E829, 0x07E69406, 0x07E6B81D, 0x07E73487, 0x07E9800E,
+    0x07E9C004, 0x07E9E003, 0x07EA0003, 0x07EA4006, 0x38000401,
+    0x38008060, 0x380400F0,
   };
   static const unsigned int aAscii[4] = {
     0xFFFFFFFF, 0xFC00FFFF, 0xF8000001, 0xF8000001,
@@ -178954,7 +178958,7 @@ static void jsonParseFillInParentage(JsonParse *pParse, u32 i, u32 iParent){
 static int jsonParseFindParents(JsonParse *pParse){
   u32 *aUp;
   assert( pParse->aUp==0 );
-  aUp = pParse->aUp = sqlite3_malloc64( sizeof(u32)*pParse->nNode );
+  aUp = pParse->aUp = sqlite3_malloc( sizeof(u32)*pParse->nNode );
   if( aUp==0 ){
     pParse->oom = 1;
     return SQLITE_NOMEM;
@@ -179016,7 +179020,7 @@ static JsonParse *jsonParseCached(
     pMatch->iHold = iMaxHold+1;
     return pMatch;
   }
-  p = sqlite3_malloc64( sizeof(*p) + nJson + 1 );
+  p = sqlite3_malloc( sizeof(*p) + nJson + 1 );
   if( p==0 ){
     sqlite3_result_error_nomem(pCtx);
     return 0;
@@ -180912,11 +180916,11 @@ struct RtreeMatchArg {
   RtreeDValue aParam[1];      /* Values for parameters to the SQL function */
 };
 
-#ifndef MAX
-# define MAX(x,y) ((x) < (y) ? (y) : (x))
-#endif
 #ifndef MIN
-# define MIN(x,y) ((x) > (y) ? (y) : (x))
+# define MIN(A,B) ((A)<(B)?(A):(B))
+#endif
+#ifndef MAX
+# define MAX(A,B) ((A)>(B)?(A):(B))
 #endif
 
 /* What version of GCC is being used.  0 means GCC is not being used .
@@ -181144,7 +181148,7 @@ static void nodeHashDelete(Rtree *pRtree, RtreeNode *pNode){
 */
 static RtreeNode *nodeNew(Rtree *pRtree, RtreeNode *pParent){
   RtreeNode *pNode;
-  pNode = (RtreeNode *)sqlite3_malloc64(sizeof(RtreeNode) + pRtree->iNodeSize);
+  pNode = (RtreeNode *)sqlite3_malloc(sizeof(RtreeNode) + pRtree->iNodeSize);
   if( pNode ){
     memset(pNode, 0, sizeof(RtreeNode) + pRtree->iNodeSize);
     pNode->zData = (u8 *)&pNode[1];
@@ -181237,7 +181241,7 @@ static int nodeAcquire(
       RTREE_IS_CORRUPT(pRtree);
     }
   }else if( pRtree->iNodeSize==sqlite3_blob_bytes(pRtree->pNodeBlob) ){
-    pNode = (RtreeNode *)sqlite3_malloc64(sizeof(RtreeNode)+pRtree->iNodeSize);
+    pNode = (RtreeNode *)sqlite3_malloc(sizeof(RtreeNode)+pRtree->iNodeSize);
     if( !pNode ){
       rc = SQLITE_NOMEM;
     }else{
@@ -181569,7 +181573,7 @@ static int rtreeOpen(sqlite3_vtab *pVTab, sqlite3_vtab_cursor **ppCursor){
   Rtree *pRtree = (Rtree *)pVTab;
   RtreeCursor *pCsr;
 
-  pCsr = (RtreeCursor *)sqlite3_malloc64(sizeof(RtreeCursor));
+  pCsr = (RtreeCursor *)sqlite3_malloc(sizeof(RtreeCursor));
   if( pCsr ){
     memset(pCsr, 0, sizeof(RtreeCursor));
     pCsr->base.pVtab = pVTab;
@@ -182266,7 +182270,7 @@ static int deserializeGeometry(sqlite3_value *pValue, RtreeConstraint *pCons){
   pSrc = sqlite3_value_pointer(pValue, "RtreeMatchArg");
   if( pSrc==0 ) return SQLITE_ERROR;
   pInfo = (sqlite3_rtree_query_info*)
-                sqlite3_malloc64( sizeof(*pInfo)+pSrc->iSize );
+                sqlite3_malloc( sizeof(*pInfo)+pSrc->iSize );
   if( !pInfo ) return SQLITE_NOMEM;
   memset(pInfo, 0, sizeof(*pInfo));
   pBlob = (RtreeMatchArg*)&pInfo[1];
@@ -182338,7 +182342,7 @@ static int rtreeFilter(
     */
     rc = nodeAcquire(pRtree, 1, 0, &pRoot);
     if( rc==SQLITE_OK && argc>0 ){
-      pCsr->aConstraint = sqlite3_malloc64(sizeof(RtreeConstraint)*argc);
+      pCsr->aConstraint = sqlite3_malloc(sizeof(RtreeConstraint)*argc);
       pCsr->nConstraint = argc;
       if( !pCsr->aConstraint ){
         rc = SQLITE_NOMEM;
@@ -182911,7 +182915,7 @@ static int splitNodeStartree(
 
   size_t nByte = (pRtree->nDim+1)*(sizeof(int*)+nCell*sizeof(int));
 
-  aaSorted = (int **)sqlite3_malloc64(nByte);
+  aaSorted = (int **)sqlite3_malloc(nByte);
   if( !aaSorted ){
     return SQLITE_NOMEM;
   }
@@ -183032,7 +183036,7 @@ static int SplitNode(
   /* Allocate an array and populate it with a copy of pCell and 
   ** all cells from node pLeft. Then zero the original node.
   */
-  aCell = sqlite3_malloc64((sizeof(RtreeCell)+sizeof(int))*(nCell+1));
+  aCell = sqlite3_malloc((sizeof(RtreeCell)+sizeof(int))*(nCell+1));
   if( !aCell ){
     rc = SQLITE_NOMEM;
     goto splitnode_out;
@@ -183323,7 +183327,7 @@ static int Reinsert(
   /* Allocate the buffers used by this operation. The allocation is
   ** relinquished before this function returns.
   */
-  aCell = (RtreeCell *)sqlite3_malloc64(n * (
+  aCell = (RtreeCell *)sqlite3_malloc(n * (
     sizeof(RtreeCell)     +         /* aCell array */
     sizeof(int)           +         /* aOrder array */
     sizeof(int)           +         /* aSpare array */
@@ -184191,7 +184195,7 @@ static int rtreeInit(
   /* Allocate the sqlite3_vtab structure */
   nDb = (int)strlen(argv[1]);
   nName = (int)strlen(argv[2]);
-  pRtree = (Rtree *)sqlite3_malloc64(sizeof(Rtree)+nDb+nName+2);
+  pRtree = (Rtree *)sqlite3_malloc(sizeof(Rtree)+nDb+nName+2);
   if( !pRtree ){
     return SQLITE_NOMEM;
   }
@@ -184469,9 +184473,9 @@ static u8 *rtreeCheckGetNode(RtreeCheck *pCheck, i64 iNode, int *pnNode){
   if( pCheck->rc==SQLITE_OK ){
     sqlite3_bind_int64(pCheck->pGetNode, 1, iNode);
     if( sqlite3_step(pCheck->pGetNode)==SQLITE_ROW ){
-      int nNode = sqlite3_column_bytes(pCheck->pGetNode, 0);
+      size_t nNode = sqlite3_column_bytes(pCheck->pGetNode, 0);
       const u8 *pNode = (const u8*)sqlite3_column_blob(pCheck->pGetNode, 0);
-      pRet = sqlite3_malloc64(nNode);
+      pRet = sqlite3_malloc(nNode);
       if( pRet==0 ){
         pCheck->rc = SQLITE_NOMEM;
       }else{
@@ -185095,7 +185099,7 @@ static GeoPoly *geopolyParseJson(const unsigned char *z, int *pRc){
       GeoPoly *pOut;
       int x = 1;
       s.nVertex--;  /* Remove the redundant vertex at the end */
-      pOut = sqlite3_malloc64( GEOPOLY_SZ(s.nVertex) );
+      pOut = sqlite3_malloc( GEOPOLY_SZ(s.nVertex) );
       x = 1;
       if( pOut==0 ) goto parse_json_err;
       pOut->nVertex = s.nVertex;
@@ -185140,7 +185144,7 @@ static GeoPoly *geopolyFuncParam(
     if( (a[0]==0 || a[0]==1)
      && (nVertex*2*sizeof(GeoCoord) + 4)==(unsigned int)nByte
     ){
-      p = sqlite3_malloc64( sizeof(*p) + (nVertex-1)*2*sizeof(GeoCoord) );
+      p = sqlite3_malloc( sizeof(*p) + (nVertex-1)*2*sizeof(GeoCoord) );
       if( p==0 ){
         if( pRc ) *pRc = SQLITE_NOMEM;
         if( pCtx ) sqlite3_result_error_nomem(pCtx);
@@ -185418,7 +185422,7 @@ static void geopolyRegularFunc(
 
   if( n<3 || r<=0.0 ) return;
   if( n>1000 ) n = 1000;
-  p = sqlite3_malloc64( sizeof(*p) + (n-1)*2*sizeof(GeoCoord) );
+  p = sqlite3_malloc( sizeof(*p) + (n-1)*2*sizeof(GeoCoord) );
   if( p==0 ){
     sqlite3_result_error_nomem(context);
     return;
@@ -186716,12 +186720,12 @@ static void rtreeMatchArgFree(void *pArg){
 static void geomCallback(sqlite3_context *ctx, int nArg, sqlite3_value **aArg){
   RtreeGeomCallback *pGeomCtx = (RtreeGeomCallback *)sqlite3_user_data(ctx);
   RtreeMatchArg *pBlob;
-  sqlite3_int64 nBlob;
+  size_t nBlob;
   int memErr = 0;
 
   nBlob = sizeof(RtreeMatchArg) + (nArg-1)*sizeof(RtreeDValue)
            + nArg*sizeof(sqlite3_value*);
-  pBlob = (RtreeMatchArg *)sqlite3_malloc64(nBlob);
+  pBlob = (RtreeMatchArg *)sqlite3_malloc(nBlob);
   if( !pBlob ){
     sqlite3_result_error_nomem(ctx);
   }else{
@@ -187432,7 +187436,7 @@ static int icuCreate(
   if( argc>0 ){
     n = strlen(argv[0])+1;
   }
-  p = (IcuTokenizer *)sqlite3_malloc64(sizeof(IcuTokenizer)+n);
+  p = (IcuTokenizer *)sqlite3_malloc(sizeof(IcuTokenizer)+n);
   if( !p ){
     return SQLITE_NOMEM;
   }
@@ -187489,7 +187493,7 @@ static int icuOpen(
     nInput = strlen(zInput);
   }
   nChar = nInput+1;
-  pCsr = (IcuCursor *)sqlite3_malloc64(
+  pCsr = (IcuCursor *)sqlite3_malloc(
       sizeof(IcuCursor) +                /* IcuCursor */
       ((nChar+3)&~3) * sizeof(UChar) +   /* IcuCursor.aChar[] */
       (nChar+1) * sizeof(int)            /* IcuCursor.aOffset[] */
@@ -200440,10 +200444,10 @@ typedef sqlite3_uint64 u64;
 #define NEVER(x) 0
 
 #ifndef MIN
-#define MIN(x,y) (((x) < (y)) ? (x) : (y))
+# define MIN(A,B) ((A)<(B)?(A):(B))
 #endif
 #ifndef MAX
-#define MAX(x,y) (((x) > (y)) ? (x) : (y))
+# define MAX(A,B) ((A)>(B)?(A):(B))
 #endif
 
 /*
@@ -203277,13 +203281,13 @@ static int fts5Bm25GetData(
     int nPhrase;                  /* Number of phrases in query */
     sqlite3_int64 nRow = 0;       /* Number of rows in table */
     sqlite3_int64 nToken = 0;     /* Number of tokens in table */
-    sqlite3_int64 nByte;          /* Bytes of space to allocate */
+    size_t nByte;                 /* Bytes of space to allocate */
     int i;
 
     /* Allocate the Fts5Bm25Data object */
     nPhrase = pApi->xPhraseCount(pFts);
     nByte = sizeof(Fts5Bm25Data) + nPhrase*2*sizeof(double);
-    p = (Fts5Bm25Data*)sqlite3_malloc64(nByte);
+    p = (Fts5Bm25Data*)sqlite3_malloc(nByte);
     if( p==0 ){
       rc = SQLITE_NOMEM;
     }else{
@@ -204243,8 +204247,8 @@ static const char *fts5ConfigGobbleWord(
 ){
   const char *zRet = 0;
 
-  sqlite3_int64 nIn = strlen(zIn);
-  char *zOut = sqlite3_malloc64(nIn+1);
+  size_t nIn = strlen(zIn);
+  char *zOut = sqlite3_malloc(nIn+1);
 
   assert( *pRc==SQLITE_OK );
   *pbQuoted = 0;
@@ -207011,7 +207015,7 @@ static char *fts5ExprTermPrint(Fts5ExprTerm *pTerm){
   for(p=pTerm; p; p=p->pSynonym){
     nByte += (int)strlen(pTerm->zTerm) * 2 + 3 + 2;
   }
-  zQuoted = sqlite3_malloc64(nByte);
+  zQuoted = sqlite3_malloc(nByte);
 
   if( zQuoted ){
     int i = 0;
@@ -207251,7 +207255,7 @@ static void fts5ExprFunction(
   }
 
   nConfig = 3 + (nArg-iArg);
-  azConfig = (const char**)sqlite3_malloc64(sizeof(char*) * nConfig);
+  azConfig = (const char**)sqlite3_malloc(sizeof(char*) * nConfig);
   if( azConfig==0 ){
     sqlite3_result_error_nomem(pCtx);
     return;
@@ -207432,7 +207436,7 @@ struct Fts5PoslistPopulator {
 
 static Fts5PoslistPopulator *sqlite3Fts5ExprClearPoslists(Fts5Expr *pExpr, int bLive){
   Fts5PoslistPopulator *pRet;
-  pRet = sqlite3_malloc64(sizeof(Fts5PoslistPopulator)*pExpr->nPhrase);
+  pRet = sqlite3_malloc(sizeof(Fts5PoslistPopulator)*pExpr->nPhrase);
   if( pRet ){
     int i;
     memset(pRet, 0, sizeof(Fts5PoslistPopulator)*pExpr->nPhrase);
@@ -207724,14 +207728,14 @@ static int sqlite3Fts5HashNew(Fts5Config *pConfig, Fts5Hash **ppNew, int *pnByte
   if( pNew==0 ){
     rc = SQLITE_NOMEM;
   }else{
-    sqlite3_int64 nByte;
+    size_t nByte;
     memset(pNew, 0, sizeof(Fts5Hash));
     pNew->pnByte = pnByte;
     pNew->eDetail = pConfig->eDetail;
 
     pNew->nSlot = 1024;
     nByte = sizeof(Fts5HashEntry*) * pNew->nSlot;
-    pNew->aSlot = (Fts5HashEntry**)sqlite3_malloc64(nByte);
+    pNew->aSlot = (Fts5HashEntry**)sqlite3_malloc(nByte);
     if( pNew->aSlot==0 ){
       sqlite3_free(pNew);
       *ppNew = 0;
@@ -207799,7 +207803,7 @@ static int fts5HashResize(Fts5Hash *pHash){
   Fts5HashEntry **apNew;
   Fts5HashEntry **apOld = pHash->aSlot;
 
-  apNew = (Fts5HashEntry**)sqlite3_malloc64(nNew*sizeof(Fts5HashEntry*));
+  apNew = (Fts5HashEntry**)sqlite3_malloc(nNew*sizeof(Fts5HashEntry*));
   if( !apNew ) return SQLITE_NOMEM;
   memset(apNew, 0, nNew*sizeof(Fts5HashEntry*));
 
@@ -207893,7 +207897,7 @@ static int sqlite3Fts5HashWrite(
   if( p==0 ){
     /* Figure out how much space to allocate */
     char *zKey;
-    sqlite3_int64 nByte = sizeof(Fts5HashEntry) + (nToken+1) + 1 + 64;
+    size_t nByte = sizeof(Fts5HashEntry) + (nToken+1) + 1 + 64;
     if( nByte<128 ) nByte = 128;
 
     /* Grow the Fts5Hash.aSlot[] array if necessary. */
@@ -207904,7 +207908,7 @@ static int sqlite3Fts5HashWrite(
     }
 
     /* Allocate new Fts5HashEntry and add it to the hash table. */
-    p = (Fts5HashEntry*)sqlite3_malloc64(nByte);
+    p = (Fts5HashEntry*)sqlite3_malloc(nByte);
     if( !p ) return SQLITE_NOMEM;
     memset(p, 0, sizeof(Fts5HashEntry));
     p->nAlloc = nByte;
@@ -208072,7 +208076,7 @@ static int fts5HashEntrySort(
   int i;
 
   *ppSorted = 0;
-  ap = sqlite3_malloc64(sizeof(Fts5HashEntry*) * nMergeSlot);
+  ap = sqlite3_malloc(sizeof(Fts5HashEntry*) * nMergeSlot);
   if( !ap ) return SQLITE_NOMEM;
   memset(ap, 0, sizeof(Fts5HashEntry*) * nMergeSlot);
 
@@ -208844,8 +208848,8 @@ static Fts5Data *fts5DataRead(Fts5Index *p, i64 iRowid){
     if( rc==SQLITE_OK ){
       u8 *aOut = 0;               /* Read blob data into this buffer */
       int nByte = sqlite3_blob_bytes(p->pReader);
-      sqlite3_int64 nAlloc = sizeof(Fts5Data) + nByte + FTS5_DATA_PADDING;
-      pRet = (Fts5Data*)sqlite3_malloc64(nAlloc);
+      size_t nAlloc = sizeof(Fts5Data) + nByte + FTS5_DATA_PADDING;
+      pRet = (Fts5Data*)sqlite3_malloc(nAlloc);
       if( pRet ){
         pRet->nn = nByte;
         aOut = pRet->p = (u8*)&pRet[1];
@@ -215368,7 +215372,7 @@ static int fts5OpenMethod(sqlite3_vtab *pVTab, sqlite3_vtab_cursor **ppCsr){
   rc = fts5NewTransaction(pTab);
   if( rc==SQLITE_OK ){
     nByte = sizeof(Fts5Cursor) + pConfig->nCol * sizeof(int);
-    pCsr = (Fts5Cursor*)sqlite3_malloc64(nByte);
+    pCsr = (Fts5Cursor*)sqlite3_malloc(nByte);
     if( pCsr ){
       Fts5Global *pGlobal = pTab->pGlobal;
       memset(pCsr, 0, nByte);
@@ -215650,7 +215654,7 @@ static int fts5CursorFirstSorted(
   
   nPhrase = sqlite3Fts5ExprPhraseCount(pCsr->pExpr);
   nByte = sizeof(Fts5Sorter) + sizeof(int) * (nPhrase-1);
-  pSorter = (Fts5Sorter*)sqlite3_malloc64(nByte);
+  pSorter = (Fts5Sorter*)sqlite3_malloc(nByte);
   if( pSorter==0 ) return SQLITE_NOMEM;
   memset(pSorter, 0, nByte);
   pSorter->nIdx = nPhrase;
@@ -217631,11 +217635,11 @@ static int fts5StorageGetStmt(
 
       case FTS5_STMT_INSERT_CONTENT: 
       case FTS5_STMT_REPLACE_CONTENT: {
-        int nCol = pC->nCol + 1;
+        size_t nCol = pC->nCol + 1;
         char *zBind;
-        int i;
+        size_t i;
 
-        zBind = sqlite3_malloc64(1 + nCol*2);
+        zBind = sqlite3_malloc(1 + nCol*2);
         if( zBind ){
           for(i=0; i<nCol; i++){
             zBind[i*2] = '?';
@@ -217802,11 +217806,11 @@ static int sqlite3Fts5StorageOpen(
 ){
   int rc = SQLITE_OK;
   Fts5Storage *p;                 /* New object */
-  sqlite3_int64 nByte;            /* Bytes of space to allocate */
+  size_t nByte;                   /* Bytes of space to allocate */
 
   nByte = sizeof(Fts5Storage)               /* Fts5Storage object */
         + pConfig->nCol * sizeof(i64);      /* Fts5Storage.aTotalSize[] */
-  *pp = p = (Fts5Storage*)sqlite3_malloc64(nByte);
+  *pp = p = (Fts5Storage*)sqlite3_malloc(nByte);
   if( !p ) return SQLITE_NOMEM;
 
   memset(p, 0, nByte);
@@ -217817,7 +217821,7 @@ static int sqlite3Fts5StorageOpen(
   if( bCreate ){
     if( pConfig->eContent==FTS5_CONTENT_NORMAL ){
       int nDefn = 32 + pConfig->nCol*10;
-      char *zDefn = sqlite3_malloc64(32 + (sqlite3_int64)pConfig->nCol * 10);
+      char *zDefn = sqlite3_malloc(32 + (size_t)pConfig->nCol * 10);
       if( zDefn==0 ){
         rc = SQLITE_NOMEM;
       }else{
@@ -218398,7 +218402,7 @@ static int sqlite3Fts5StorageIntegrity(Fts5Storage *p){
 
   memset(&ctx, 0, sizeof(Fts5IntegrityCtx));
   ctx.pConfig = p->pConfig;
-  aTotalSize = (i64*)sqlite3_malloc64(pConfig->nCol*(sizeof(int)+sizeof(i64)));
+  aTotalSize = (i64*)sqlite3_malloc(pConfig->nCol*(sizeof(int)+sizeof(i64)));
   if( !aTotalSize ) return SQLITE_NOMEM;
   aColSize = (int*)&aTotalSize[pConfig->nCol];
   memset(aTotalSize, 0, sizeof(i64) * pConfig->nCol);
@@ -218789,14 +218793,14 @@ static int fts5AsciiTokenize(
   int is = 0;
 
   char aFold[64];
-  int nFold = sizeof(aFold);
+  size_t nFold = sizeof(aFold);
   char *pFold = aFold;
   unsigned char *a = p->aTokenChar;
 
   UNUSED_PARAM(iUnused);
 
   while( is<nText && rc==SQLITE_OK ){
-    int nByte;
+    size_t nByte;
 
     /* Skip any leading divider characters. */
     while( is<nText && ((pText[is]&0x80)==0 && a[(int)pText[is]]==0) ){
@@ -218814,7 +218818,7 @@ static int fts5AsciiTokenize(
     nByte = ie-is;
     if( nByte>nFold ){
       if( pFold!=aFold ) sqlite3_free(pFold);
-      pFold = sqlite3_malloc64((sqlite3_int64)nByte*2);
+      pFold = sqlite3_malloc(nByte*2);
       if( pFold==0 ){
         rc = SQLITE_NOMEM;
         break;
@@ -219113,7 +219117,7 @@ static int fts5UnicodeTokenize(
 
   /* Output buffer */
   char *aFold = p->aFold;
-  int nFold = p->nFold;
+  size_t nFold = p->nFold;
   const char *pEnd = &aFold[nFold-6];
 
   UNUSED_PARAM(iUnused);
@@ -219153,7 +219157,7 @@ static int fts5UnicodeTokenize(
       /* Grow the output buffer so that there is sufficient space to fit the
       ** largest possible utf-8 character.  */
       if( zOut>pEnd ){
-        aFold = sqlite3_malloc64((sqlite3_int64)nFold*2);
+        aFold = sqlite3_malloc(nFold*2);
         if( aFold==0 ){
           rc = SQLITE_NOMEM;
           goto tokenize_done;
@@ -220344,8 +220348,8 @@ static int sqlite3Fts5UnicodeCatParse(const char *zCat, u8 *aArray){
 }
 
 static const u16 aFts5UnicodeBlock[] = {
-    0,     1538,  2131,  2142,  2142,  2142,  2142,  2142,  2142,  2142,  
-    2142,  2142,  2142,  2142,  2142,  2145,  2147,  
+    0,     1537,  2133,  2144,  2144,  2144,  2144,  2144,  2144,  2144,  
+    2144,  2144,  2144,  2144,  2144,  2147,  2149,  
   };
 static const u16 aFts5UnicodeMap[] = {
     0,     32,    33,    36,    37,    40,    41,    42,    43,    44,    
@@ -220455,114 +220459,114 @@ static const u16 aFts5UnicodeMap[] = {
     10634, 10635, 10636, 10637, 10638, 10639, 10640, 10641, 10642, 10643, 
     10644, 10645, 10646, 10647, 10648, 10649, 10712, 10713, 10714, 10715, 
     10716, 10748, 10749, 10750, 11008, 11056, 11077, 11079, 11085, 11126, 
-    11160, 11210, 11264, 11312, 11360, 11363, 11365, 11367, 11374, 11377, 
-    11378, 11380, 11381, 11383, 11388, 11390, 11393, 11394, 11492, 11493, 
-    11499, 11503, 11506, 11513, 11517, 11518, 11520, 11559, 11565, 11568, 
-    11631, 11632, 11647, 11648, 11680, 11688, 11696, 11704, 11712, 11720, 
-    11728, 11736, 11744, 11776, 11778, 11779, 11780, 11781, 11782, 11785, 
-    11786, 11787, 11788, 11789, 11790, 11799, 11800, 11802, 11803, 11804, 
-    11805, 11806, 11808, 11809, 11810, 11811, 11812, 11813, 11814, 11815, 
-    11816, 11817, 11818, 11823, 11824, 11834, 11836, 11840, 11841, 11842, 
-    11843, 11904, 11931, 12032, 12272, 12288, 12289, 12292, 12293, 12294, 
-    12295, 12296, 12297, 12298, 12299, 12300, 12301, 12302, 12303, 12304, 
-    12305, 12306, 12308, 12309, 12310, 12311, 12312, 12313, 12314, 12315, 
-    12316, 12317, 12318, 12320, 12321, 12330, 12334, 12336, 12337, 12342, 
-    12344, 12347, 12348, 12349, 12350, 12353, 12441, 12443, 12445, 12447, 
-    12448, 12449, 12539, 12540, 12543, 12549, 12593, 12688, 12690, 12694, 
-    12704, 12736, 12784, 12800, 12832, 12842, 12872, 12880, 12881, 12896, 
-    12928, 12938, 12977, 12992, 13056, 13312, 19893, 19904, 19968, 40943, 
-    40960, 40981, 40982, 42128, 42192, 42232, 42238, 42240, 42508, 42509, 
-    42512, 42528, 42538, 42560, 42606, 42607, 42608, 42611, 42612, 42622, 
-    42623, 42624, 42652, 42654, 42656, 42726, 42736, 42738, 42752, 42775, 
-    42784, 42786, 42800, 42802, 42864, 42865, 42873, 42878, 42888, 42889, 
-    42891, 42895, 42896, 42900, 42902, 42923, 42927, 42928, 42933, 42934, 
-    42999, 43000, 43002, 43003, 43010, 43011, 43014, 43015, 43019, 43020, 
-    43043, 43045, 43047, 43048, 43056, 43062, 43064, 43065, 43072, 43124, 
-    43136, 43138, 43188, 43204, 43214, 43216, 43232, 43250, 43256, 43259, 
-    43260, 43261, 43263, 43264, 43274, 43302, 43310, 43312, 43335, 43346, 
-    43359, 43360, 43392, 43395, 43396, 43443, 43444, 43446, 43450, 43452, 
-    43453, 43457, 43471, 43472, 43486, 43488, 43493, 43494, 43495, 43504, 
-    43514, 43520, 43561, 43567, 43569, 43571, 43573, 43584, 43587, 43588, 
-    43596, 43597, 43600, 43612, 43616, 43632, 43633, 43639, 43642, 43643, 
-    43644, 43645, 43646, 43696, 43697, 43698, 43701, 43703, 43705, 43710, 
-    43712, 43713, 43714, 43739, 43741, 43742, 43744, 43755, 43756, 43758, 
-    43760, 43762, 43763, 43765, 43766, 43777, 43785, 43793, 43808, 43816, 
-    43824, 43867, 43868, 43872, 43888, 43968, 44003, 44005, 44006, 44008, 
-    44009, 44011, 44012, 44013, 44016, 44032, 55203, 55216, 55243, 55296, 
-    56191, 56319, 57343, 57344, 63743, 63744, 64112, 64256, 64275, 64285, 
-    64286, 64287, 64297, 64298, 64312, 64318, 64320, 64323, 64326, 64434, 
-    64467, 64830, 64831, 64848, 64914, 65008, 65020, 65021, 65024, 65040, 
-    65047, 65048, 65049, 65056, 65072, 65073, 65075, 65077, 65078, 65079, 
-    65080, 65081, 65082, 65083, 65084, 65085, 65086, 65087, 65088, 65089, 
-    65090, 65091, 65092, 65093, 65095, 65096, 65097, 65101, 65104, 65108, 
-    65112, 65113, 65114, 65115, 65116, 65117, 65118, 65119, 65122, 65123, 
-    65124, 65128, 65129, 65130, 65136, 65142, 65279, 65281, 65284, 65285, 
-    65288, 65289, 65290, 65291, 65292, 65293, 65294, 65296, 65306, 65308, 
-    65311, 65313, 65339, 65340, 65341, 65342, 65343, 65344, 65345, 65371, 
-    65372, 65373, 65374, 65375, 65376, 65377, 65378, 65379, 65380, 65382, 
-    65392, 65393, 65438, 65440, 65474, 65482, 65490, 65498, 65504, 65506, 
-    65507, 65508, 65509, 65512, 65513, 65517, 65529, 65532, 0,     13,    
-    40,    60,    63,    80,    128,   256,   263,   311,   320,   373,   
-    377,   394,   396,   400,   416,   464,   509,   640,   672,   736,   
-    737,   768,   800,   813,   833,   834,   842,   848,   886,   896,   
-    927,   928,   968,   976,   977,   1024,  1064,  1104,  1184,  1200,  
-    1240,  1280,  1328,  1391,  1536,  1856,  1888,  2048,  2056,  2058,  
-    2103,  2108,  2111,  2135,  2136,  2144,  2167,  2169,  2176,  2215,  
-    2272,  2292,  2299,  2304,  2326,  2335,  2336,  2367,  2432,  2492,  
-    2494,  2496,  2514,  2560,  2561,  2565,  2572,  2576,  2581,  2585,  
-    2616,  2623,  2624,  2640,  2656,  2685,  2687,  2688,  2717,  2752,  
-    2760,  2761,  2789,  2795,  2800,  2816,  2873,  2880,  2904,  2912,  
-    2936,  2944,  2969,  2985,  3072,  3200,  3264,  3322,  3328,  3364,  
-    3376,  3680,  3840,  3869,  3879,  3888,  3910,  3921,  3925,  4096,  
-    4097,  4098,  4099,  4152,  4167,  4178,  4198,  4223,  4226,  4227,  
-    4272,  4275,  4279,  4281,  4283,  4285,  4286,  4301,  4304,  4336,  
-    4352,  4355,  4391,  4396,  4397,  4406,  4416,  4420,  4421,  4432,  
-    4467,  4468,  4470,  4480,  4482,  4483,  4531,  4534,  4543,  4545,  
-    4549,  4553,  4557,  4560,  4570,  4571,  4572,  4573,  4577,  4608,  
-    4627,  4652,  4655,  4658,  4660,  4661,  4662,  4664,  4670,  4736,  
-    4744,  4746,  4751,  4767,  4777,  4784,  4831,  4832,  4835,  4848,  
-    4864,  4866,  4869,  4879,  4883,  4906,  4914,  4917,  4923,  4925,  
-    4926,  4928,  4929,  4935,  4939,  4944,  4951,  4957,  4962,  4966,  
-    4976,  5120,  5173,  5176,  5184,  5186,  5189,  5190,  5191,  5195,  
-    5200,  5211,  5213,  5214,  5248,  5296,  5299,  5305,  5306,  5307,  
-    5311,  5313,  5314,  5316,  5318,  5319,  5328,  5504,  5551,  5554,  
-    5560,  5564,  5566,  5567,  5569,  5592,  5596,  5632,  5680,  5683,  
-    5691,  5693,  5694,  5695,  5697,  5700,  5712,  5728,  5760,  5803,  
-    5804,  5805,  5806,  5808,  5814,  5815,  5824,  5888,  5917,  5920,  
-    5922,  5926,  5927,  5936,  5946,  5948,  5951,  6144,  6188,  6191,  
-    6200,  6201,  6203,  6304,  6336,  6368,  6378,  6399,  6656,  6657,  
-    6667,  6707,  6713,  6714,  6715,  6719,  6727,  6736,  6737,  6743,  
-    6745,  6748,  6790,  6794,  6807,  6808,  6810,  6813,  6814,  6848,  
-    7168,  7178,  7215,  7216,  7224,  7230,  7231,  7232,  7233,  7248,  
-    7258,  7280,  7282,  7314,  7337,  7338,  7345,  7346,  7348,  7349,  
-    7424,  7432,  7435,  7473,  7482,  7484,  7487,  7494,  7495,  7504,  
-    7520,  7527,  7530,  7562,  7568,  7571,  7573,  7574,  7575,  7576,  
-    7584,  7904,  7923,  7925,  7927,  8192,  9216,  9328,  9344,  12288, 
-    17408, 26624, 27200, 27232, 27246, 27344, 27376, 27381, 27392, 27440, 
-    27447, 27452, 27456, 27460, 27461, 27472, 27483, 27491, 27517, 28224, 
-    28256, 28288, 28311, 28416, 28496, 28497, 28559, 28563, 28640, 28672, 
-    34801, 34816, 45056, 45424, 48128, 48240, 48256, 48272, 48284, 48285, 
-    48287, 48288, 53248, 53504, 53545, 53605, 53607, 53610, 53613, 53619, 
-    53627, 53635, 53637, 53644, 53674, 53678, 53760, 53826, 53829, 53984, 
-    54016, 54112, 54272, 54298, 54324, 54350, 54358, 54376, 54402, 54428, 
-    54430, 54434, 54437, 54441, 54446, 54454, 54459, 54461, 54469, 54480, 
-    54506, 54532, 54535, 54541, 54550, 54558, 54584, 54587, 54592, 54598, 
-    54602, 54610, 54636, 54662, 54688, 54714, 54740, 54766, 54792, 54818, 
-    54844, 54870, 54896, 54922, 54952, 54977, 54978, 55003, 55004, 55010, 
-    55035, 55036, 55061, 55062, 55068, 55093, 55094, 55119, 55120, 55126, 
-    55151, 55152, 55177, 55178, 55184, 55209, 55210, 55235, 55236, 55242, 
-    55246, 55296, 55808, 55863, 55867, 55917, 55925, 55926, 55940, 55941, 
-    55943, 55963, 55969, 57344, 57352, 57371, 57379, 57382, 59392, 59591, 
-    59600, 59648, 59682, 59716, 59728, 59742, 60529, 60588, 60589, 60592, 
-    60593, 60928, 60933, 60961, 60964, 60967, 60969, 60980, 60985, 60987, 
-    60994, 60999, 61001, 61003, 61005, 61009, 61012, 61015, 61017, 61019, 
-    61021, 61023, 61025, 61028, 61031, 61036, 61044, 61049, 61054, 61056, 
-    61067, 61089, 61093, 61099, 61168, 61440, 61488, 61600, 61617, 61633, 
-    61649, 61696, 61712, 61808, 61926, 61968, 62016, 62032, 62048, 62208, 
-    62459, 62464, 63200, 63216, 63232, 63360, 63488, 63504, 63568, 63584, 
-    63632, 63744, 63760, 63808, 63859, 63866, 63868, 63920, 63936, 63952, 
-    64096, 0,     42710, 42752, 46900, 46912, 47133, 47136, 52897, 52912, 
-    60384, 63488, 1,     32,    256,   0,     65533, 
+    11160, 11264, 11312, 11360, 11363, 11365, 11367, 11374, 11377, 11378, 
+    11380, 11381, 11383, 11388, 11390, 11393, 11394, 11492, 11493, 11499, 
+    11503, 11506, 11513, 11517, 11518, 11520, 11559, 11565, 11568, 11631, 
+    11632, 11647, 11648, 11680, 11688, 11696, 11704, 11712, 11720, 11728, 
+    11736, 11744, 11776, 11778, 11779, 11780, 11781, 11782, 11785, 11786, 
+    11787, 11788, 11789, 11790, 11799, 11800, 11802, 11803, 11804, 11805, 
+    11806, 11808, 11809, 11810, 11811, 11812, 11813, 11814, 11815, 11816, 
+    11817, 11818, 11823, 11824, 11834, 11836, 11840, 11841, 11842, 11843, 
+    11904, 11931, 12032, 12272, 12288, 12289, 12292, 12293, 12294, 12295, 
+    12296, 12297, 12298, 12299, 12300, 12301, 12302, 12303, 12304, 12305, 
+    12306, 12308, 12309, 12310, 12311, 12312, 12313, 12314, 12315, 12316, 
+    12317, 12318, 12320, 12321, 12330, 12334, 12336, 12337, 12342, 12344, 
+    12347, 12348, 12349, 12350, 12353, 12441, 12443, 12445, 12447, 12448, 
+    12449, 12539, 12540, 12543, 12549, 12593, 12688, 12690, 12694, 12704, 
+    12736, 12784, 12800, 12832, 12842, 12872, 12880, 12881, 12896, 12928, 
+    12938, 12977, 12992, 13056, 13312, 19893, 19904, 19968, 40943, 40960, 
+    40981, 40982, 42128, 42192, 42232, 42238, 42240, 42508, 42509, 42512, 
+    42528, 42538, 42560, 42606, 42607, 42608, 42611, 42612, 42622, 42623, 
+    42624, 42652, 42654, 42656, 42726, 42736, 42738, 42752, 42775, 42784, 
+    42786, 42800, 42802, 42864, 42865, 42873, 42878, 42888, 42889, 42891, 
+    42895, 42896, 42900, 42902, 42923, 42927, 42928, 42933, 42934, 42999, 
+    43000, 43002, 43003, 43010, 43011, 43014, 43015, 43019, 43020, 43043, 
+    43045, 43047, 43048, 43056, 43062, 43064, 43065, 43072, 43124, 43136, 
+    43138, 43188, 43204, 43214, 43216, 43232, 43250, 43256, 43259, 43260, 
+    43261, 43263, 43264, 43274, 43302, 43310, 43312, 43335, 43346, 43359, 
+    43360, 43392, 43395, 43396, 43443, 43444, 43446, 43450, 43452, 43453, 
+    43457, 43471, 43472, 43486, 43488, 43493, 43494, 43495, 43504, 43514, 
+    43520, 43561, 43567, 43569, 43571, 43573, 43584, 43587, 43588, 43596, 
+    43597, 43600, 43612, 43616, 43632, 43633, 43639, 43642, 43643, 43644, 
+    43645, 43646, 43696, 43697, 43698, 43701, 43703, 43705, 43710, 43712, 
+    43713, 43714, 43739, 43741, 43742, 43744, 43755, 43756, 43758, 43760, 
+    43762, 43763, 43765, 43766, 43777, 43785, 43793, 43808, 43816, 43824, 
+    43867, 43868, 43872, 43888, 43968, 44003, 44005, 44006, 44008, 44009, 
+    44011, 44012, 44013, 44016, 44032, 55203, 55216, 55243, 55296, 56191, 
+    56319, 57343, 57344, 63743, 63744, 64112, 64256, 64275, 64285, 64286, 
+    64287, 64297, 64298, 64312, 64318, 64320, 64323, 64326, 64434, 64467, 
+    64830, 64831, 64848, 64914, 65008, 65020, 65021, 65024, 65040, 65047, 
+    65048, 65049, 65056, 65072, 65073, 65075, 65077, 65078, 65079, 65080, 
+    65081, 65082, 65083, 65084, 65085, 65086, 65087, 65088, 65089, 65090, 
+    65091, 65092, 65093, 65095, 65096, 65097, 65101, 65104, 65108, 65112, 
+    65113, 65114, 65115, 65116, 65117, 65118, 65119, 65122, 65123, 65124, 
+    65128, 65129, 65130, 65136, 65142, 65279, 65281, 65284, 65285, 65288, 
+    65289, 65290, 65291, 65292, 65293, 65294, 65296, 65306, 65308, 65311, 
+    65313, 65339, 65340, 65341, 65342, 65343, 65344, 65345, 65371, 65372, 
+    65373, 65374, 65375, 65376, 65377, 65378, 65379, 65380, 65382, 65392, 
+    65393, 65438, 65440, 65474, 65482, 65490, 65498, 65504, 65506, 65507, 
+    65508, 65509, 65512, 65513, 65517, 65529, 65532, 0,     13,    40,    
+    60,    63,    80,    128,   256,   263,   311,   320,   373,   377,   
+    394,   396,   400,   416,   464,   509,   640,   672,   736,   737,   
+    768,   800,   813,   833,   834,   842,   848,   886,   896,   927,   
+    928,   968,   976,   977,   1024,  1064,  1104,  1184,  1200,  1240,  
+    1280,  1328,  1391,  1536,  1856,  1888,  2048,  2056,  2058,  2103,  
+    2108,  2111,  2135,  2136,  2144,  2167,  2169,  2176,  2215,  2272,  
+    2292,  2299,  2304,  2326,  2335,  2336,  2367,  2432,  2492,  2494,  
+    2496,  2514,  2560,  2561,  2565,  2572,  2576,  2581,  2585,  2616,  
+    2623,  2624,  2640,  2656,  2685,  2687,  2688,  2717,  2752,  2760,  
+    2761,  2789,  2795,  2800,  2816,  2873,  2880,  2904,  2912,  2936,  
+    2944,  2969,  2985,  3072,  3200,  3264,  3322,  3328,  3364,  3376,  
+    3680,  3840,  3869,  3879,  3888,  3910,  3921,  3925,  4096,  4097,  
+    4098,  4099,  4152,  4167,  4178,  4198,  4223,  4226,  4227,  4272,  
+    4275,  4279,  4281,  4283,  4285,  4286,  4301,  4304,  4336,  4352,  
+    4355,  4391,  4396,  4397,  4406,  4416,  4420,  4421,  4432,  4467,  
+    4468,  4470,  4480,  4482,  4483,  4531,  4534,  4543,  4545,  4549,  
+    4553,  4557,  4560,  4570,  4571,  4572,  4573,  4577,  4608,  4627,  
+    4652,  4655,  4658,  4660,  4661,  4662,  4664,  4670,  4736,  4744,  
+    4746,  4751,  4767,  4777,  4784,  4831,  4832,  4835,  4848,  4864,  
+    4866,  4869,  4879,  4883,  4906,  4914,  4917,  4923,  4925,  4926,  
+    4928,  4929,  4935,  4939,  4944,  4951,  4957,  4962,  4966,  4976,  
+    5120,  5173,  5176,  5184,  5186,  5189,  5190,  5191,  5195,  5200,  
+    5211,  5213,  5214,  5248,  5296,  5299,  5305,  5306,  5307,  5311,  
+    5313,  5314,  5316,  5318,  5319,  5328,  5504,  5551,  5554,  5560,  
+    5564,  5566,  5567,  5569,  5592,  5596,  5632,  5680,  5683,  5691,  
+    5693,  5694,  5695,  5697,  5700,  5712,  5728,  5760,  5803,  5804,  
+    5805,  5806,  5808,  5814,  5815,  5824,  5888,  5917,  5920,  5922,  
+    5926,  5927,  5936,  5946,  5948,  5951,  6144,  6188,  6191,  6200,  
+    6201,  6203,  6304,  6336,  6368,  6378,  6399,  6656,  6657,  6667,  
+    6707,  6713,  6714,  6715,  6719,  6727,  6736,  6737,  6743,  6745,  
+    6748,  6790,  6794,  6807,  6808,  6810,  6813,  6814,  6848,  7168,  
+    7178,  7215,  7216,  7224,  7230,  7231,  7232,  7233,  7248,  7258,  
+    7280,  7282,  7314,  7337,  7338,  7345,  7346,  7348,  7349,  7424,  
+    7432,  7435,  7473,  7482,  7484,  7487,  7494,  7495,  7504,  7520,  
+    7527,  7530,  7562,  7568,  7571,  7573,  7574,  7575,  7576,  7584,  
+    7904,  7923,  7925,  7927,  8192,  9216,  9328,  9344,  12288, 17408, 
+    26624, 27200, 27232, 27246, 27344, 27376, 27381, 27392, 27440, 27447, 
+    27452, 27456, 27460, 27461, 27472, 27483, 27491, 27517, 28224, 28256, 
+    28288, 28311, 28416, 28496, 28497, 28559, 28563, 28640, 28672, 34807, 
+    34816, 45056, 45424, 48128, 48240, 48256, 48272, 48284, 48285, 48287, 
+    48288, 53248, 53504, 53545, 53605, 53607, 53610, 53613, 53619, 53627, 
+    53635, 53637, 53644, 53674, 53678, 53760, 53826, 53829, 53984, 54016, 
+    54112, 54272, 54298, 54324, 54350, 54358, 54376, 54402, 54428, 54430, 
+    54434, 54437, 54441, 54446, 54454, 54459, 54461, 54469, 54480, 54506, 
+    54532, 54535, 54541, 54550, 54558, 54584, 54587, 54592, 54598, 54602, 
+    54610, 54636, 54662, 54688, 54714, 54740, 54766, 54792, 54818, 54844, 
+    54870, 54896, 54922, 54952, 54977, 54978, 55003, 55004, 55010, 55035, 
+    55036, 55061, 55062, 55068, 55093, 55094, 55119, 55120, 55126, 55151, 
+    55152, 55177, 55178, 55184, 55209, 55210, 55235, 55236, 55242, 55246, 
+    55296, 55808, 55863, 55867, 55917, 55925, 55926, 55940, 55941, 55943, 
+    55963, 55969, 57344, 57352, 57371, 57379, 57382, 59392, 59591, 59600, 
+    59648, 59682, 59716, 59728, 59742, 60529, 60588, 60589, 60592, 60593, 
+    60928, 60933, 60961, 60964, 60967, 60969, 60980, 60985, 60987, 60994, 
+    60999, 61001, 61003, 61005, 61009, 61012, 61015, 61017, 61019, 61021, 
+    61023, 61025, 61028, 61031, 61036, 61044, 61049, 61054, 61056, 61067, 
+    61089, 61093, 61099, 61168, 61440, 61488, 61600, 61617, 61633, 61649, 
+    61696, 61712, 61808, 61926, 61968, 62016, 62032, 62048, 62208, 62459, 
+    62464, 63200, 63216, 63232, 63360, 63456, 63488, 63504, 63568, 63584, 
+    63632, 63744, 63757, 63859, 63866, 63909, 63918, 63949, 64096, 64112, 
+    64120, 64128, 64144, 0,     42710, 42752, 46900, 46912, 47133, 47136, 
+    52897, 52912, 60384, 63488, 1,     32,    256,   0,     65533, 
   };
 static const u16 aFts5UnicodeData[] = {
     1025,  61,    117,   55,    117,   54,    50,    53,    57,    53,    
@@ -220672,114 +220676,114 @@ static const u16 aFts5UnicodeData[] = {
     50,    54,    50,    54,    50,    54,    50,    54,    50,    54,    
     50,    54,    50,    54,    50,    2041,  54,    50,    54,    50,    
     1049,  54,    50,    8281,  1562,  697,   90,    217,   1274,  1050,  
-    1594,  1722,  1513,  1509,  126,   73,    69,    254,   105,   37,    
-    94,    37,    94,    165,   70,    105,   37,    3166,  37,    218,   
-    158,   108,   94,    149,   47,    85,    1221,  37,    37,    1799,  
-    38,    53,    44,    743,   231,   231,   231,   231,   231,   231,   
-    231,   231,   1036,  85,    52,    51,    52,    51,    117,   52,    
-    51,    53,    52,    51,    309,   49,    85,    49,    53,    52,    
-    51,    85,    52,    51,    54,    50,    54,    50,    54,    50,    
-    54,    50,    181,   38,    341,   81,    149,   49,    53,    54,    
-    405,   858,   2874,  6874,  410,   61,    117,   58,    38,    39,    
-    46,    54,    50,    54,    50,    54,    50,    54,    50,    54,    
-    50,    90,    54,    50,    54,    50,    54,    50,    54,    50,    
-    49,    54,    82,    58,    302,   140,   74,    49,    166,   90,    
-    110,   38,    39,    53,    90,    2759,  76,    88,    70,    39,    
-    49,    2887,  53,    102,   39,    1383,  3015,  90,    143,   346,   
-    871,   1178,  519,   1018,  335,   986,   271,   58,    495,   1050,  
-    335,   1274,  495,   2042,  8218,  39,    39,    2074,  39,    39,    
-    679,   38,    36583, 1786,  1287,  198,   85,    8583,  38,    117,   
-    519,   333,   71,    1502,  39,    44,    107,   53,    332,   53,    
-    38,    926,   70,    76,    2247,  334,   76,    213,   760,   294,   
-    88,    478,   69,    2014,  38,    261,   190,   350,   38,    88,    
-    158,   39,    158,   69,    702,   137,   37,    169,   37,    158,   
-    39,    70,    37,    231,   44,    103,   44,    135,   44,    743,   
-    74,    76,    42,    154,   207,   90,    55,    58,    1671,  149,   
-    74,    1607,  522,   76,    85,    333,   588,   199,   117,   39,    
-    53,    71,    44,    333,   903,   268,   85,    743,   364,   74,    
-    53,    935,   108,   42,    1511,  44,    74,    140,   74,    44,    
-    138,   437,   38,    333,   85,    167,   44,    38,    295,   333,   
-    167,   1319,  204,   74,    76,    74,    76,    103,   44,    263,   
-    44,    42,    333,   149,   519,   38,    199,   122,   39,    42,    
-    44,    42,    1607,  44,    39,    108,   71,    76,    167,   76,    
-    39,    44,    39,    71,    38,    85,    359,   42,    76,    74,    
-    85,    39,    70,    42,    44,    199,   199,   199,   231,   231,   
-    1381,  56,    134,   197,   2565,  1127,  74,    44,    74,    44,    
-    74,    53,    42,    44,    333,   39,    39,    743,   1575,  36,    
-    68,    68,    36,    63,    63,    11719, 3399,  229,   165,   39,    
-    44,    327,   57,    423,   167,   39,    71,    71,    3463,  536,   
-    11623, 50,    54,    2055,  1735,  391,   55,    58,    524,   245,   
-    54,    50,    53,    524,   53,    81,    80,    54,    50,    54,    
-    50,    54,    50,    54,    50,    54,    50,    54,    50,    54,    
-    50,    54,    50,    85,    54,    50,    149,   112,   117,   149,   
-    49,    54,    50,    54,    50,    54,    50,    117,   57,    49,    
-    121,   53,    55,    85,    167,   4327,  34,    117,   55,    117,   
-    54,    50,    53,    57,    53,    49,    85,    333,   85,    121,   
-    85,    841,   54,    53,    50,    56,    48,    56,    837,   54,    
-    57,    50,    57,    54,    50,    53,    54,    50,    85,    327,   
-    38,    1447,  70,    999,   199,   199,   199,   103,   87,    57,    
-    56,    58,    87,    58,    153,   90,    98,    90,    391,   839,   
-    615,   71,    487,   455,   3943,  117,   1455,  314,   1710,  143,   
-    570,   79,    122,   410,   58,    1466,  44,    935,   1575,  44,    
-    879,   1031,  143,   647,   46,    263,   46,    1223,  172,   967,   
-    53,    1159,  263,   53,    174,   1289,  1285,  2503,  333,   1161,  
-    1157,  1287,  1671,  53,    9959,  711,   263,   199,   39,    1415,  
-    71,    39,    743,   53,    271,   743,   90,    239,   999,   303,   
-    615,   71,    175,   711,   207,   53,    839,   53,    1799,  79,    
-    71,    527,   1487,  39,    108,   76,    140,   135,   103,   935,   
-    108,   44,    303,   309,   935,   79,    53,    935,   111,   263,   
-    58,    903,   76,    175,   245,   1735,  245,   711,   271,   615,   
-    271,   583,   149,   239,   2343,  1641,  1637,  207,   1159,  140,   
-    333,   1007,  935,   335,   39,    711,   364,   143,   181,   42,    
-    44,    42,    1703,  492,   245,   655,   333,   108,   42,    1447,  
-    106,   140,   74,    76,    85,    34,    149,   34,    807,   333,   
-    108,   1159,  172,   42,    268,   333,   149,   39,    74,    1127,  
-    44,    85,    39,    76,    42,    1543,  106,   300,   74,    135,   
-    149,   140,   53,    333,   39,    53,    39,    117,   655,   583,   
-    807,   106,   108,   74,    44,    42,    76,    213,   44,    231,   
-    39,    135,   487,   327,   53,    1511,  44,    106,   268,   333,   
-    76,    74,    263,   71,    711,   231,   71,    167,   76,    39,    
-    74,    44,    138,   74,    106,   39,    42,    167,   74,    236,   
-    172,   1703,  106,   268,   74,    108,   42,    44,    135,   181,   
-    333,   53,    53,    44,    1543,  106,   204,   42,    44,    138,   
-    76,    42,    76,    71,    53,    39,    333,   1511,  106,   140,   
-    138,   76,    42,    76,    757,   135,   76,    1543,  106,   268,   
-    74,    44,    42,    76,    117,   39,    333,   437,   1383,  44,    
-    42,    44,    74,    204,   42,    44,    333,   871,   108,   74,    
-    140,   42,    172,   333,   79,    117,   58,    1415,  106,   300,   
-    42,    76,    53,    1033,  1029,  333,   303,   39,    39,    332,   
-    1287,  204,   42,    39,    140,   277,   44,    39,    204,   74,    
-    108,   1287,  135,   428,   42,    76,    117,   39,    181,   1831,  
-    295,   1191,  42,    236,   204,   42,    44,    39,    181,   333,   
-    623,   85,    967,   716,   42,    236,   42,    76,    42,    76,    
-    231,   71,    1223,  204,   44,    76,    236,   39,    44,    333,   
-    199,   71,    1031,  170,   76,    74,    44,    42,    44,    39,    
-    333,   615,   76,    74,    85,    29511, 3566,  181,   6279,  34279, 
-    18663, 18215, 999,   333,   85,    967,   172,   53,    1543,  236,   
-    181,   154,   134,   53,    58,    333,   239,   679,   615,   1033,  
-    1029,  751,   149,   2215,  39,    1482,  140,   422,   70,    39,    
-    39,    24167, 9191,  12679, 3431,  423,   295,   327,   58,    76,    
-    53,    130,   7898,  1274,  1946,  74,    108,   122,   202,   258,   
-    268,   90,    236,   986,   140,   1914,  2138,  108,   58,    655,   
-    2810,  815,   841,   837,   841,   229,   581,   841,   837,   41,    
-    73,    41,    73,    137,   265,   133,   37,    229,   357,   841,   
-    837,   73,    137,   265,   233,   837,   73,    137,   169,   41,    
-    233,   837,   841,   837,   841,   837,   841,   837,   841,   837,   
-    841,   837,   841,   901,   809,   57,    805,   57,    197,   809,   
-    57,    805,   57,    197,   809,   57,    805,   57,    197,   809,   
-    57,    805,   57,    197,   809,   57,    805,   57,    197,   94,    
-    1613,  16410, 1772,  154,   1612,  282,   44,    474,   44,    90,    
-    181,   172,   492,   236,   556,   236,   76,    172,   6311,  303,   
-    236,   1097,  1093,  236,   333,   85,    1903,  58,    111,   55,    
-    143,   135,   871,   71,    39,    39,    327,   135,   39,    39,    
-    39,    39,    39,    39,    103,   71,    39,    39,    39,    39,    
-    39,    39,    71,    39,    135,   231,   135,   135,   39,    327,   
-    551,   103,   167,   551,   89,    1434,  3226,  506,   506,   506,   
-    1210,  431,   2970,  1978,  954,   1434,  314,   90,    218,   8058,  
-    184,   23226, 442,   346,   3738,  2874,  410,   1818,  346,   1306,  
-    986,   410,   1530,  1594,  154,   58,    1274,  346,   122,   1562,  
-    474,   39,    39,    39,    39,    39,    39,    39,    39,    39,    
-    39,    17351, 34,    3074,  7692,  63,    63,    
+    3354,  1513,  1509,  126,   73,    69,    254,   105,   37,    94,    
+    37,    94,    165,   70,    105,   37,    3166,  37,    218,   158,   
+    108,   94,    149,   47,    85,    1221,  37,    37,    1799,  38,    
+    53,    44,    743,   231,   231,   231,   231,   231,   231,   231,   
+    231,   1036,  85,    52,    51,    52,    51,    117,   52,    51,    
+    53,    52,    51,    309,   49,    85,    49,    53,    52,    51,    
+    85,    52,    51,    54,    50,    54,    50,    54,    50,    54,    
+    50,    181,   38,    341,   81,    149,   49,    53,    54,    437,   
+    858,   2874,  6874,  410,   61,    117,   58,    38,    39,    46,    
+    54,    50,    54,    50,    54,    50,    54,    50,    54,    50,    
+    90,    54,    50,    54,    50,    54,    50,    54,    50,    49,    
+    54,    82,    58,    302,   140,   74,    49,    166,   90,    110,   
+    38,    39,    53,    90,    2759,  76,    88,    70,    39,    49,    
+    2887,  53,    102,   39,    1383,  3015,  90,    143,   346,   871,   
+    1178,  519,   1018,  335,   986,   271,   58,    495,   1050,  335,   
+    1274,  495,   2042,  8218,  39,    39,    2074,  39,    39,    679,   
+    38,    36583, 1786,  1287,  198,   85,    8583,  38,    117,   519,   
+    333,   71,    1502,  39,    44,    107,   53,    332,   53,    38,    
+    926,   70,    76,    2247,  334,   76,    213,   760,   294,   88,    
+    478,   69,    2014,  38,    261,   190,   350,   38,    88,    158,   
+    39,    158,   69,    702,   137,   37,    169,   37,    158,   39,    
+    70,    37,    231,   44,    103,   44,    135,   44,    743,   74,    
+    76,    42,    154,   207,   90,    55,    58,    1671,  149,   74,    
+    1607,  522,   76,    85,    333,   588,   199,   117,   39,    53,    
+    71,    44,    333,   903,   268,   85,    743,   364,   74,    53,    
+    935,   108,   42,    1511,  44,    74,    140,   74,    44,    138,   
+    437,   38,    333,   85,    167,   44,    38,    295,   333,   167,   
+    1319,  204,   74,    76,    74,    76,    103,   44,    263,   44,    
+    42,    333,   149,   519,   38,    199,   122,   39,    42,    44,    
+    42,    1607,  44,    39,    108,   71,    76,    167,   76,    39,    
+    44,    39,    71,    38,    85,    359,   42,    76,    74,    85,    
+    39,    70,    42,    44,    199,   199,   199,   231,   231,   1381,  
+    56,    134,   197,   2565,  1127,  74,    44,    74,    44,    74,    
+    53,    42,    44,    333,   39,    39,    743,   1575,  36,    68,    
+    68,    36,    63,    63,    11719, 3399,  229,   165,   39,    44,    
+    327,   57,    423,   167,   39,    71,    71,    3463,  536,   11623, 
+    50,    54,    2055,  1735,  391,   55,    58,    524,   245,   54,    
+    50,    53,    524,   53,    81,    80,    54,    50,    54,    50,    
+    54,    50,    54,    50,    54,    50,    54,    50,    54,    50,    
+    54,    50,    85,    54,    50,    149,   112,   117,   149,   49,    
+    54,    50,    54,    50,    54,    50,    117,   57,    49,    121,   
+    53,    55,    85,    167,   4327,  34,    117,   55,    117,   54,    
+    50,    53,    57,    53,    49,    85,    333,   85,    121,   85,    
+    841,   54,    53,    50,    56,    48,    56,    837,   54,    57,    
+    50,    57,    54,    50,    53,    54,    50,    85,    327,   38,    
+    1447,  70,    999,   199,   199,   199,   103,   87,    57,    56,    
+    58,    87,    58,    153,   90,    98,    90,    391,   839,   615,   
+    71,    487,   455,   3943,  117,   1455,  314,   1710,  143,   570,   
+    79,    122,   410,   58,    1466,  44,    935,   1575,  44,    879,   
+    1031,  143,   647,   46,    263,   46,    1223,  172,   967,   53,    
+    1159,  263,   53,    174,   1289,  1285,  2503,  333,   1161,  1157,  
+    1287,  1671,  53,    9959,  711,   263,   199,   39,    1415,  71,    
+    39,    743,   53,    271,   743,   90,    239,   999,   303,   615,   
+    71,    175,   711,   207,   53,    839,   53,    1799,  79,    71,    
+    527,   1487,  39,    108,   76,    140,   135,   103,   935,   108,   
+    44,    303,   309,   935,   79,    53,    935,   111,   263,   58,    
+    903,   76,    175,   245,   1735,  245,   711,   271,   615,   271,   
+    583,   149,   239,   2343,  1641,  1637,  207,   1159,  140,   333,   
+    1007,  935,   335,   39,    711,   364,   143,   181,   42,    44,    
+    42,    1703,  492,   245,   655,   333,   108,   42,    1447,  106,   
+    140,   74,    76,    85,    34,    149,   34,    807,   333,   108,   
+    1159,  172,   42,    268,   333,   149,   39,    74,    1127,  44,    
+    85,    39,    76,    42,    1543,  106,   300,   74,    135,   149,   
+    140,   53,    333,   39,    53,    39,    117,   655,   583,   807,   
+    106,   108,   74,    44,    42,    76,    213,   44,    231,   39,    
+    135,   487,   327,   53,    1511,  44,    106,   268,   333,   76,    
+    74,    263,   71,    711,   231,   71,    167,   76,    39,    74,    
+    44,    138,   74,    106,   39,    42,    167,   74,    236,   172,   
+    1703,  106,   268,   74,    108,   42,    44,    135,   181,   333,   
+    53,    53,    44,    1543,  106,   204,   42,    44,    138,   76,    
+    42,    76,    71,    53,    39,    333,   1511,  106,   140,   138,   
+    76,    42,    76,    757,   135,   76,    1543,  106,   268,   74,    
+    44,    42,    76,    117,   39,    333,   437,   1383,  44,    42,    
+    44,    74,    204,   42,    44,    333,   871,   108,   74,    140,   
+    42,    172,   333,   79,    117,   58,    1415,  106,   300,   42,    
+    76,    53,    1033,  1029,  333,   303,   39,    39,    332,   1287,  
+    204,   42,    39,    140,   277,   44,    39,    204,   74,    108,   
+    1287,  135,   428,   42,    76,    117,   39,    181,   1831,  295,   
+    1191,  42,    236,   204,   42,    44,    39,    181,   333,   623,   
+    85,    967,   716,   42,    236,   42,    76,    42,    76,    231,   
+    71,    1223,  204,   44,    76,    236,   39,    44,    333,   199,   
+    71,    1031,  170,   76,    74,    44,    42,    44,    39,    333,   
+    615,   76,    74,    85,    29511, 3566,  181,   6279,  34279, 18663, 
+    18215, 999,   333,   85,    967,   172,   53,    1543,  236,   181,   
+    154,   134,   53,    58,    333,   239,   679,   615,   1033,  1029,  
+    751,   149,   2215,  39,    1482,  140,   422,   70,    39,    39,    
+    24167, 9191,  12679, 3431,  423,   295,   327,   58,    76,    53,    
+    130,   7898,  1274,  1946,  74,    108,   122,   202,   258,   268,   
+    90,    236,   986,   140,   1914,  2138,  108,   58,    655,   2810,  
+    815,   841,   837,   841,   229,   581,   841,   837,   41,    73,    
+    41,    73,    137,   265,   133,   37,    229,   357,   841,   837,   
+    73,    137,   265,   233,   837,   73,    137,   169,   41,    233,   
+    837,   841,   837,   841,   837,   841,   837,   841,   837,   841,   
+    837,   841,   901,   809,   57,    805,   57,    197,   809,   57,    
+    805,   57,    197,   809,   57,    805,   57,    197,   809,   57,    
+    805,   57,    197,   809,   57,    805,   57,    197,   94,    1613,  
+    16410, 1772,  154,   1612,  282,   44,    474,   44,    90,    181,   
+    172,   492,   236,   556,   236,   76,    172,   6311,  303,   236,   
+    1097,  1093,  236,   333,   85,    1903,  58,    111,   55,    143,   
+    135,   871,   71,    39,    39,    327,   135,   39,    39,    39,    
+    39,    39,    39,    103,   71,    39,    39,    39,    39,    39,    
+    39,    71,    39,    135,   231,   135,   135,   39,    327,   551,   
+    103,   167,   551,   89,    1434,  3226,  506,   506,   506,   1210,  
+    431,   3002,  1978,  954,   1434,  314,   90,    218,   8058,  184,   
+    23258, 442,   378,   3738,  2874,  410,   410,   1818,  346,   1306,  
+    986,   410,   3258,  154,   1338,  218,   954,   4346,  474,   154,   
+    122,   122,   218,   39,    39,    39,    39,    39,    39,    39,    
+    39,    39,    39,    17351, 34,    3074,  7692,  63,    63,    
   };
 
 static int sqlite3Fts5UnicodeCategory(u32 iCode) { 
@@ -220825,6 +220829,7 @@ static void sqlite3Fts5UnicodeAscii(u8 *aArray, u8 *aAscii){
     iTbl++;
   }
 }
+
 
 /*
 ** 2015 May 30
@@ -222265,7 +222270,7 @@ SQLITE_API int sqlite3_extension_init(
 #endif /* !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_STMTVTAB) */
 
 /************** End of stmt.c ************************************************/
-#if __LINE__!=222268
+#if __LINE__!=222273
 #undef SQLITE_SOURCE_ID
 #define SQLITE_SOURCE_ID      "2019-02-08 13:17:39 0eca3dd3d38b31c92b49ca2d311128b74584714d9e7de895b1a6286ef959alt2"
 #endif
