@@ -2671,7 +2671,6 @@ SQLITE_API int sqlite3_db_config(sqlite3*, int op, ...);
 ** SQLite will never invoke xInit() more than once without an intervening
 ** call to xShutdown().
 */
-#if 0 /* move to private header */
 typedef struct sqlite3_mem_methods sqlite3_mem_methods;
 struct sqlite3_mem_methods {
   void *(*xMalloc)(int);         /* Memory allocation function */
@@ -2683,7 +2682,6 @@ struct sqlite3_mem_methods {
   void (*xShutdown)(void*);      /* Deinitialize the memory allocator */
   void *pAppData;                /* Argument to xInit() and xShutdown() */
 };
-#endif
 
 /*
 ** CAPI3REF: Configuration Options
@@ -7527,7 +7525,7 @@ struct sqlite3_index_info {
     unsigned char omit;      /* Do not code a test for this constraint */
   } *aConstraintUsage;
   int idxNum;                /* Number used to identify the index */
-  const char *idxStr;        /* String, possibly obtained from sqlite3_malloc */
+  char *idxStr;              /* String, possibly obtained from sqlite3_malloc */
   int needToFreeIdxStr;      /* Free idxStr using sqlite3_free() if true */
   int orderByConsumed;       /* True if output is already ordered */
   double estimatedCost;           /* Estimated cost of using this index */
@@ -13762,6 +13760,11 @@ SQLITE_PRIVATE void sqlite3HashClear(Hash*);
 # define SQLITE_DEFAULT_SORTERREF_SIZE 0x7fffffff
 #endif
 
+#ifndef SQLITE_CONFIG_MALLOC2
+# define SQLITE_CONFIG_MALLOC2      98  /* sqlite3_mem_methods2* */
+# define SQLITE_CONFIG_GETMALLOC2   99  /* sqlite3_mem_methods2* */
+#endif
+
 /*
 ** The compile-time options SQLITE_MMAP_READWRITE and 
 ** SQLITE_ENABLE_BATCH_ATOMIC_WRITE are not compatible with one another.
@@ -18302,8 +18305,8 @@ typedef struct {
 ** Moved here from sqlite.h, made private on purpose
 */
 
-typedef struct sqlite3_mem_methods sqlite3_mem_methods;
-struct sqlite3_mem_methods {
+typedef struct sqlite3_mem_methods2 sqlite3_mem_methods2;
+struct sqlite3_mem_methods2 {
   void *(*xMalloc)(size_t);      /* Memory allocation function */
   void (*xFree)(void*);          /* Free a prior allocation */
   void *(*xRealloc)(void*,size_t);/* Resize an allocation */
@@ -18336,7 +18339,7 @@ struct Sqlite3Config {
   int szLookaside;                  /* Default lookaside buffer size */
   int nLookaside;                   /* Default lookaside buffer count */
   int nStmtSpill;                   /* Stmt-journal spill-to-disk threshold */
-  sqlite3_mem_methods m;            /* Low-level memory allocation interface */
+  sqlite3_mem_methods2 m;           /* Low-level memory allocation interface */
   sqlite3_mutex_methods mutex;      /* Low-level mutex interface */
   sqlite3_pcache_methods2 pcache2;  /* Low-level page-cache interface */
   void *pHeap;                      /* Heap storage space */
@@ -18687,11 +18690,11 @@ SQLITE_PRIVATE int sqlite3HeapNearlyFull(void);
 ** are, disable MEMSYS3
 */
 #ifdef SQLITE_ENABLE_MEMSYS5
-SQLITE_PRIVATE const sqlite3_mem_methods *sqlite3MemGetMemsys5(void);
+SQLITE_PRIVATE const sqlite3_mem_methods2 *sqlite3MemGetMemsys5(void);
 #undef SQLITE_ENABLE_MEMSYS3
 #endif
 #ifdef SQLITE_ENABLE_MEMSYS3
-SQLITE_PRIVATE const sqlite3_mem_methods *sqlite3MemGetMemsys3(void);
+SQLITE_PRIVATE const sqlite3_mem_methods2 *sqlite3MemGetMemsys3(void);
 #endif
 
 
@@ -22731,7 +22734,7 @@ static void sqlite3MemShutdown(void *NotUsed){ return; }
 ** sqlite3GlobalConfig.m with pointers to the routines in this file.
 */
 SQLITE_PRIVATE void sqlite3MemSetDefault(void){
-  static const sqlite3_mem_methods defaultMethods = {
+  static const sqlite3_mem_methods2 defaultMethods = {
      sqlite3MemMalloc,
      sqlite3MemFree,
      sqlite3MemRealloc,
@@ -22741,7 +22744,7 @@ SQLITE_PRIVATE void sqlite3MemSetDefault(void){
      sqlite3MemShutdown,
      0
   };
-  sqlite3_config(SQLITE_CONFIG_MALLOC, &defaultMethods);
+  sqlite3_config(SQLITE_CONFIG_MALLOC2, &defaultMethods);
 }
 
 #endif /* SQLITE_ZERO_MALLOC */
@@ -23028,7 +23031,7 @@ static void sqlite3MemShutdown(void *NotUsed){
 ** sqlite3GlobalConfig.m with pointers to the routines in this file.
 */
 SQLITE_PRIVATE void sqlite3MemSetDefault(void){
-  static const sqlite3_mem_methods defaultMethods = {
+  static const sqlite3_mem_methods2 defaultMethods = {
      sqlite3MemMalloc,
      sqlite3MemFree,
      sqlite3MemRealloc,
@@ -23038,7 +23041,7 @@ SQLITE_PRIVATE void sqlite3MemSetDefault(void){
      sqlite3MemShutdown,
      0
   };
-  sqlite3_config(SQLITE_CONFIG_MALLOC, &defaultMethods);
+  sqlite3_config(SQLITE_CONFIG_MALLOC2, &defaultMethods);
 }
 
 #endif /* SQLITE_SYSTEM_MALLOC */
@@ -23413,7 +23416,7 @@ static void *sqlite3MemRealloc(void *pPrior, size_t nByte){
 ** sqlite3GlobalConfig.m with pointers to the routines in this file.
 */
 SQLITE_PRIVATE void sqlite3MemSetDefault(void){
-  static const sqlite3_mem_methods defaultMethods = {
+  static const sqlite3_mem_methods2 defaultMethods = {
      sqlite3MemMalloc,
      sqlite3MemFree,
      sqlite3MemRealloc,
@@ -23423,7 +23426,7 @@ SQLITE_PRIVATE void sqlite3MemSetDefault(void){
      sqlite3MemShutdown,
      0
   };
-  sqlite3_config(SQLITE_CONFIG_MALLOC, &defaultMethods);
+  sqlite3_config(SQLITE_CONFIG_MALLOC2, &defaultMethods);
 }
 
 /*
@@ -24252,8 +24255,8 @@ SQLITE_PRIVATE void sqlite3Memsys3Dump(const char *zFilename){
 ** This routine is only called by sqlite3_config(), and therefore
 ** is not required to be threadsafe (it is not).
 */
-SQLITE_PRIVATE const sqlite3_mem_methods *sqlite3MemGetMemsys3(void){
-  static const sqlite3_mem_methods mempoolMethods = {
+SQLITE_PRIVATE const sqlite3_mem_methods2 *sqlite3MemGetMemsys3(void){
+  static const sqlite3_mem_methods2 mempoolMethods = {
      memsys3Malloc,
      memsys3Free,
      memsys3Realloc,
@@ -24833,8 +24836,8 @@ SQLITE_PRIVATE void sqlite3Memsys5Dump(const char *zFilename){
 ** linkage. It returns a pointer to a static sqlite3_mem_methods
 ** struct populated with the memsys5 methods.
 */
-SQLITE_PRIVATE const sqlite3_mem_methods *sqlite3MemGetMemsys5(void){
-  static const sqlite3_mem_methods memsys5Methods = {
+SQLITE_PRIVATE const sqlite3_mem_methods2 *sqlite3MemGetMemsys5(void){
+  static const sqlite3_mem_methods2 memsys5Methods = {
      memsys5Malloc,
      memsys5Free,
      memsys5Realloc,
@@ -40342,6 +40345,9 @@ SQLITE_API int sqlite3_os_init(void){
     UNIXVFS("unix",          cygwinIoFinder ),
 #elif OS_VXWORKS
     UNIXVFS("unix",          vxworksIoFinder ),
+#elif __Fuchsia__
+    /* We are told that Fuchsia only supports dot-file locking */
+    UNIXVFS("unix",          dotlockIoFinder ),
 #elif defined(__GNU__) || defined(HAVE_FLOCK)
     UNIXVFS("unix",          flockIoFinder ),
 #else
@@ -41072,7 +41078,7 @@ static size_t winMemRoundup(size_t n);
 static int winMemInit(void *pAppData);
 static void winMemShutdown(void *pAppData);
 
-SQLITE_PRIVATE const sqlite3_mem_methods *sqlite3MemGetWin32(void);
+SQLITE_PRIVATE const sqlite3_mem_methods2 *sqlite3MemGetWin32(void);
 #endif /* SQLITE_WIN32_MALLOC */
 
 /*
@@ -42255,8 +42261,8 @@ static void winMemShutdown(void *pAppData){
 ** This routine is only called by sqlite3_config(), and therefore
 ** is not required to be threadsafe (it is not).
 */
-SQLITE_PRIVATE const sqlite3_mem_methods *sqlite3MemGetWin32(void){
-  static const sqlite3_mem_methods winMemMethods = {
+SQLITE_PRIVATE const sqlite3_mem_methods2 *sqlite3MemGetWin32(void){
+  static const sqlite3_mem_methods2 winMemMethods = {
     winMemMalloc,
     winMemFree,
     winMemRealloc,
@@ -42270,7 +42276,7 @@ SQLITE_PRIVATE const sqlite3_mem_methods *sqlite3MemGetWin32(void){
 }
 
 SQLITE_PRIVATE void sqlite3MemSetDefault(void){
-  sqlite3_config(SQLITE_CONFIG_MALLOC, sqlite3MemGetWin32());
+  sqlite3_config(SQLITE_CONFIG_MALLOC2, sqlite3MemGetWin32());
 }
 #endif /* SQLITE_WIN32_MALLOC */
 
@@ -82411,10 +82417,10 @@ SQLITE_API int sqlite3_column_type(sqlite3_stmt *pStmt, int i){
 ** or a constant) then useTypes 2, 3, and 4 return NULL.
 */
 static const void *columnName(
-  sqlite3_stmt *pStmt,
-  int N,
-  const void *(*xFunc)(Mem*),
-  int useType
+  sqlite3_stmt *pStmt,     /* The statement */
+  int N,                   /* Which column to get the name for */
+  int useUtf16,            /* True to return the name as UTF16 */
+  int useType              /* What type of name */
 ){
   const void *ret;
   Vdbe *p;
@@ -82435,8 +82441,12 @@ static const void *columnName(
     N += useType*n;
     sqlite3_mutex_enter(db->mutex);
     assert( db->mallocFailed==0 );
-    ret = xFunc(&p->aColName[N]);
-     /* A malloc may have failed inside of the xFunc() call. If this
+    if( useUtf16 ){
+      ret = sqlite3_value_text16((sqlite3_value*)&p->aColName[N]);
+    }else{
+      ret = sqlite3_value_text((sqlite3_value*)&p->aColName[N]);
+    }
+    /* A malloc may have failed inside of the _text() call. If this
     ** is the case, clear the mallocFailed flag and return NULL.
     */
     if( db->mallocFailed ){
@@ -82453,13 +82463,11 @@ static const void *columnName(
 ** statement pStmt.
 */
 SQLITE_API const char *sqlite3_column_name(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text, COLNAME_NAME);
+  return columnName(pStmt, N, 0, COLNAME_NAME);
 }
 #ifndef SQLITE_OMIT_UTF16
 SQLITE_API const void *sqlite3_column_name16(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text16, COLNAME_NAME);
+  return columnName(pStmt, N, 1, COLNAME_NAME);
 }
 #endif
 
@@ -82478,13 +82486,11 @@ SQLITE_API const void *sqlite3_column_name16(sqlite3_stmt *pStmt, int N){
 ** of the result set of SQL statement pStmt.
 */
 SQLITE_API const char *sqlite3_column_decltype(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text, COLNAME_DECLTYPE);
+  return columnName(pStmt, N, 0, COLNAME_DECLTYPE);
 }
 #ifndef SQLITE_OMIT_UTF16
 SQLITE_API const void *sqlite3_column_decltype16(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text16, COLNAME_DECLTYPE);
+  return columnName(pStmt, N, 1, COLNAME_DECLTYPE);
 }
 #endif /* SQLITE_OMIT_UTF16 */
 #endif /* SQLITE_OMIT_DECLTYPE */
@@ -82496,13 +82502,11 @@ SQLITE_API const void *sqlite3_column_decltype16(sqlite3_stmt *pStmt, int N){
 ** anything else which is not an unambiguous reference to a database column.
 */
 SQLITE_API const char *sqlite3_column_database_name(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text, COLNAME_DATABASE);
+  return columnName(pStmt, N, 0, COLNAME_DATABASE);
 }
 #ifndef SQLITE_OMIT_UTF16
 SQLITE_API const void *sqlite3_column_database_name16(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text16, COLNAME_DATABASE);
+  return columnName(pStmt, N, 1, COLNAME_DATABASE);
 }
 #endif /* SQLITE_OMIT_UTF16 */
 
@@ -82512,13 +82516,11 @@ SQLITE_API const void *sqlite3_column_database_name16(sqlite3_stmt *pStmt, int N
 ** anything else which is not an unambiguous reference to a database column.
 */
 SQLITE_API const char *sqlite3_column_table_name(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text, COLNAME_TABLE);
+  return columnName(pStmt, N, 0, COLNAME_TABLE);
 }
 #ifndef SQLITE_OMIT_UTF16
 SQLITE_API const void *sqlite3_column_table_name16(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text16, COLNAME_TABLE);
+  return columnName(pStmt, N, 1, COLNAME_TABLE);
 }
 #endif /* SQLITE_OMIT_UTF16 */
 
@@ -82528,13 +82530,11 @@ SQLITE_API const void *sqlite3_column_table_name16(sqlite3_stmt *pStmt, int N){
 ** anything else which is not an unambiguous reference to a database column.
 */
 SQLITE_API const char *sqlite3_column_origin_name(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text, COLNAME_COLUMN);
+  return columnName(pStmt, N, 0, COLNAME_COLUMN);
 }
 #ifndef SQLITE_OMIT_UTF16
 SQLITE_API const void *sqlite3_column_origin_name16(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text16, COLNAME_COLUMN);
+  return columnName(pStmt, N, 1, COLNAME_COLUMN);
 }
 #endif /* SQLITE_OMIT_UTF16 */
 #endif /* SQLITE_ENABLE_COLUMN_METADATA */
@@ -154376,22 +154376,22 @@ SQLITE_API int sqlite3_config(int op, ...){
     }
 #endif
 
-    case SQLITE_CONFIG_MALLOC: {
-      /* EVIDENCE-OF: R-55594-21030 The SQLITE_CONFIG_MALLOC option takes a
+    case SQLITE_CONFIG_MALLOC2: {
+      /* EVIDENCE-OF: R-55594-21030 The SQLITE_CONFIG_MALLOC2 option takes a
       ** single argument which is a pointer to an instance of the
-      ** sqlite3_mem_methods structure. The argument specifies alternative
+      ** sqlite3_mem_methods2 structure. The argument specifies alternative
       ** low-level memory allocation routines to be used in place of the memory
       ** allocation routines built into SQLite. */
-      sqlite3GlobalConfig.m = *va_arg(ap, sqlite3_mem_methods*);
+      sqlite3GlobalConfig.m = *va_arg(ap, sqlite3_mem_methods2*);
       break;
     }
-    case SQLITE_CONFIG_GETMALLOC: {
-      /* EVIDENCE-OF: R-51213-46414 The SQLITE_CONFIG_GETMALLOC option takes a
+    case SQLITE_CONFIG_GETMALLOC2: {
+      /* EVIDENCE-OF: R-51213-46414 The SQLITE_CONFIG_GETMALLOC2 option takes a
       ** single argument which is a pointer to an instance of the
       ** sqlite3_mem_methods structure. The sqlite3_mem_methods structure is
       ** filled with the currently defined memory allocation routines. */
       if( sqlite3GlobalConfig.m.xMalloc==0 ) sqlite3MemSetDefault();
-      *va_arg(ap, sqlite3_mem_methods*) = sqlite3GlobalConfig.m;
+      *va_arg(ap, sqlite3_mem_methods2*) = sqlite3GlobalConfig.m;
       break;
     }
     case SQLITE_CONFIG_MEMSTATUS: {
@@ -188934,6 +188934,7 @@ static void rbuFossilDeltaFunc(
   }else{
     nOut2 = rbuDeltaApply(aOrig, nOrig, aDelta, nDelta, aOut);
     if( nOut2!=nOut ){
+      sqlite3_free(aOut);
       sqlite3_result_error(context, "corrupt fossil delta", -1);
     }else{
       sqlite3_result_blob(context, aOut, nOut, sqlite3_free);
@@ -222270,7 +222271,7 @@ SQLITE_API int sqlite3_extension_init(
 #endif /* !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_STMTVTAB) */
 
 /************** End of stmt.c ************************************************/
-#if __LINE__!=222273
+#if __LINE__!=222274
 #undef SQLITE_SOURCE_ID
 #define SQLITE_SOURCE_ID      "2019-02-08 13:17:39 0eca3dd3d38b31c92b49ca2d311128b74584714d9e7de895b1a6286ef959alt2"
 #endif
