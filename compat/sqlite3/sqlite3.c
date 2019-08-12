@@ -16873,11 +16873,12 @@ struct CollSeq {
 ** Note also that the numeric types are grouped together so that testing
 ** for a numeric type is a single comparison.  And the BLOB type is first.
 */
-#define SQLITE_AFF_BLOB     'A'
-#define SQLITE_AFF_TEXT     'B'
-#define SQLITE_AFF_NUMERIC  'C'
-#define SQLITE_AFF_INTEGER  'D'
-#define SQLITE_AFF_REAL     'E'
+#define SQLITE_AFF_NONE     0x40  /* '@' */
+#define SQLITE_AFF_BLOB     0x41  /* 'A' */
+#define SQLITE_AFF_TEXT     0x42  /* 'B' */
+#define SQLITE_AFF_NUMERIC  0x43  /* 'C' */
+#define SQLITE_AFF_INTEGER  0x44  /* 'D' */
+#define SQLITE_AFF_REAL     0x45  /* 'E' */
 
 #define sqlite3IsNumericAffinity(X)  ((X)>=SQLITE_AFF_NUMERIC)
 
@@ -18917,8 +18918,8 @@ SQLITE_PRIVATE void sqlite3CollapseDatabaseArray(sqlite3*);
 SQLITE_PRIVATE void sqlite3CommitInternalChanges(sqlite3*);
 SQLITE_PRIVATE void sqlite3DeleteColumnNames(sqlite3*,Table*);
 SQLITE_PRIVATE int sqlite3ColumnsFromExprList(Parse*,ExprList*,i16*,Column**);
-SQLITE_PRIVATE void sqlite3SelectAddColumnTypeAndCollation(Parse*,Table*,Select*);
-SQLITE_PRIVATE Table *sqlite3ResultSetOfSelect(Parse*,Select*);
+SQLITE_PRIVATE void sqlite3SelectAddColumnTypeAndCollation(Parse*,Table*,Select*,char);
+SQLITE_PRIVATE Table *sqlite3ResultSetOfSelect(Parse*,Select*,char);
 SQLITE_PRIVATE void sqlite3OpenMasterTable(Parse *, int);
 SQLITE_PRIVATE Index *sqlite3PrimaryKeyIndex(Table*);
 SQLITE_PRIVATE i16 sqlite3ColumnOfIndex(Index*, i16);
@@ -30667,7 +30668,7 @@ SQLITE_PRIVATE int sqlite3StrICmp(const char *zLeft, const char *zRight){
   return c;
 }
 SQLITE_API int sqlite3_strnicmp(const char *zLeft, const char *zRight, int N){
-  register unsigned char *a, *b;
+  unsigned char *a, *b;
   if( zLeft==0 ){
     return zRight ? -1 : 0;
   }else if( zRight==0 ){
@@ -84275,6 +84276,7 @@ static void applyNumericAffinity(Mem *pRec, int bTryForInt){
 **    Convert pRec to a text representation.
 **
 ** SQLITE_AFF_BLOB:
+** SQLITE_AFF_NONE:
 **    No-op.  pRec is unchanged.
 */
 static void applyAffinity(
@@ -86841,15 +86843,27 @@ case OP_Affinity: {
   assert( pOp->p2>0 );
   assert( zAffinity[pOp->p2]==0 );
   pIn1 = &aMem[pOp->p1];
-  while( 1 /*edit-by-break*/ ){
+  while( 1 /*exit-by-break*/ ){
     assert( pIn1 <= &p->aMem[(p->nMem+1 - p->nCursor)] );
     assert( memIsValid(pIn1) );
     applyAffinity(pIn1, zAffinity[0], encoding);
     if( zAffinity[0]==SQLITE_AFF_REAL && (pIn1->flags & MEM_Int)!=0 ){
-      /* When applying REAL affinity, if the result is still MEM_Int, 
-      ** indicate that REAL is actually desired */
-      pIn1->flags |= MEM_IntReal;
-      pIn1->flags &= ~MEM_Int;
+      /* When applying REAL affinity, if the result is still an MEM_Int
+      ** that will fit in 6 bytes, then change the type to MEM_IntReal
+      ** so that we keep the high-resolution integer value but know that
+      ** the type really wants to be REAL. */
+      testcase( pIn1->u.i==140737488355328LL );
+      testcase( pIn1->u.i==140737488355327LL );
+      testcase( pIn1->u.i==-140737488355328LL );
+      testcase( pIn1->u.i==-140737488355329LL );
+      if( pIn1->u.i<=140737488355327LL && pIn1->u.i>=-140737488355328LL ){
+        pIn1->flags |= MEM_IntReal;
+        pIn1->flags &= ~MEM_Int;
+      }else{
+        pIn1->u.r = (double)pIn1->u.i;
+        pIn1->flags |= MEM_Real;
+        pIn1->flags &= ~MEM_Int;
+      }
     }
     REGISTER_TRACE((int)(pIn1-aMem), pIn1);
     zAffinity++;
@@ -97694,7 +97708,7 @@ SQLITE_PRIVATE int sqlite3ExprCollSeqMatch(Parse *pParse, Expr *pE1, Expr *pE2){
 */
 SQLITE_PRIVATE char sqlite3CompareAffinity(Expr *pExpr, char aff2){
   char aff1 = sqlite3ExprAffinity(pExpr);
-  if( aff1 && aff2 ){
+  if( aff1>SQLITE_AFF_NONE && aff2>SQLITE_AFF_NONE ){
     /* Both sides of the comparison are columns. If one has numeric
     ** affinity, use that. Otherwise use no affinity.
     */
@@ -97703,15 +97717,10 @@ SQLITE_PRIVATE char sqlite3CompareAffinity(Expr *pExpr, char aff2){
     }else{
       return SQLITE_AFF_BLOB;
     }
-  }else if( !aff1 && !aff2 ){
-    /* Neither side of the comparison is a column.  Compare the
-    ** results directly.
-    */
-    return SQLITE_AFF_BLOB;
   }else{
     /* One side is a column, the other is not. Use the columns affinity. */
-    assert( aff1==0 || aff2==0 );
-    return (aff1 + aff2);
+    assert( aff1<=SQLITE_AFF_NONE || aff2<=SQLITE_AFF_NONE );
+    return (aff1<=SQLITE_AFF_NONE ? aff2 : aff1) | SQLITE_AFF_NONE;
   }
 }
 
@@ -97744,14 +97753,13 @@ static char comparisonAffinity(Expr *pExpr){
 */
 SQLITE_PRIVATE int sqlite3IndexAffinityOk(Expr *pExpr, char idx_affinity){
   char aff = comparisonAffinity(pExpr);
-  switch( aff ){
-    case SQLITE_AFF_BLOB:
-      return 1;
-    case SQLITE_AFF_TEXT:
-      return idx_affinity==SQLITE_AFF_TEXT;
-    default:
-      return sqlite3IsNumericAffinity(idx_affinity);
+  if( aff<SQLITE_AFF_TEXT ){
+    return 1;
   }
+  if( aff==SQLITE_AFF_TEXT ){
+    return idx_affinity==SQLITE_AFF_TEXT;
+  }
+  return sqlite3IsNumericAffinity(idx_affinity);
 }
 
 /*
@@ -100252,7 +100260,7 @@ SQLITE_PRIVATE void sqlite3CodeRhsOfIN(
     struct ExprList_item *pItem;
     int r1, r2, r3;
     affinity = sqlite3ExprAffinity(pLeft);
-    if( !affinity ){
+    if( affinity<=SQLITE_AFF_NONE ){
       affinity = SQLITE_AFF_BLOB;
     }
     if( pKeyInfo ){
@@ -100942,7 +100950,7 @@ expr_code_doover:
         */
         int iReg = sqlite3ExprCodeTarget(pParse, pExpr->pLeft,target);
         int aff = sqlite3TableColumnAffinity(pExpr->y.pTab, pExpr->iColumn);
-        if( aff!=SQLITE_AFF_BLOB ){
+        if( aff>SQLITE_AFF_BLOB ){
           static const char zAff[] = "B\000C\000D\000E";
           assert( SQLITE_AFF_BLOB=='A' );
           assert( SQLITE_AFF_TEXT=='B' );
@@ -101245,7 +101253,7 @@ expr_code_doover:
         assert( nFarg==1 );
         aff = sqlite3ExprAffinity(pFarg->a[0].pExpr);
         sqlite3VdbeLoadString(v, target, 
-                              aff ? azAff[aff-SQLITE_AFF_BLOB] : "none");
+                (aff<=SQLITE_AFF_NONE) ? "none" : azAff[aff-SQLITE_AFF_BLOB]);
         return target;
       }
 #endif
@@ -102399,7 +102407,9 @@ static int exprImpliesNotNull(
 ){
   assert( p );
   assert( pNN );
-  if( sqlite3ExprCompare(pParse, p, pNN, iTab)==0 ) return 1;
+  if( sqlite3ExprCompare(pParse, p, pNN, iTab)==0 ){
+    return pNN->op!=TK_NULL;
+  }
   switch( p->op ){
     case TK_IN: {
       if( seenNot && ExprHasProperty(p, EP_xIsSelect) ) return 0;
@@ -109696,7 +109706,7 @@ SQLITE_PRIVATE void sqlite3EndTable(
       addrTop = sqlite3VdbeCurrentAddr(v) + 1;
       sqlite3VdbeAddOp3(v, OP_InitCoroutine, regYield, 0, addrTop);
       if( pParse->nErr ) return;
-      pSelTab = sqlite3ResultSetOfSelect(pParse, pSelect);
+      pSelTab = sqlite3ResultSetOfSelect(pParse, pSelect, SQLITE_AFF_BLOB);
       if( pSelTab==0 ) return;
       assert( p->aCol==0 );
       p->nCol = pSelTab->nCol;
@@ -109960,10 +109970,10 @@ SQLITE_PRIVATE int sqlite3ViewGetColumnNames(Parse *pParse, Table *pTable){
 #ifndef SQLITE_OMIT_AUTHORIZATION
     xAuth = db->xAuth;
     db->xAuth = 0;
-    pSelTab = sqlite3ResultSetOfSelect(pParse, pSel);
+    pSelTab = sqlite3ResultSetOfSelect(pParse, pSel, SQLITE_AFF_NONE);
     db->xAuth = xAuth;
 #else
-    pSelTab = sqlite3ResultSetOfSelect(pParse, pSel);
+    pSelTab = sqlite3ResultSetOfSelect(pParse, pSel, SQLITE_AFF_NONE);
 #endif
     pParse->nTab = n;
     if( pTable->pCheck ){
@@ -109979,7 +109989,8 @@ SQLITE_PRIVATE int sqlite3ViewGetColumnNames(Parse *pParse, Table *pTable){
        && pParse->nErr==0
        && pTable->nCol==pSel->pEList->nExpr
       ){
-        sqlite3SelectAddColumnTypeAndCollation(pParse, pTable, pSel);
+        sqlite3SelectAddColumnTypeAndCollation(pParse, pTable, pSel,
+                                               SQLITE_AFF_NONE);
       }
     }else if( pSelTab ){
       /* CREATE VIEW name AS...  without an argument list.  Construct
@@ -117302,18 +117313,18 @@ SQLITE_PRIVATE const char *sqlite3IndexAffinityStr(sqlite3 *db, Index *pIdx){
     }
     for(n=0; n<pIdx->nColumn; n++){
       i16 x = pIdx->aiColumn[n];
+      char aff;
       if( x>=0 ){
-        pIdx->zColAff[n] = pTab->aCol[x].affinity;
+        aff = pTab->aCol[x].affinity;
       }else if( x==XN_ROWID ){
-        pIdx->zColAff[n] = SQLITE_AFF_INTEGER;
+        aff = SQLITE_AFF_INTEGER;
       }else{
-        char aff;
         assert( x==XN_EXPR );
         assert( pIdx->aColExpr!=0 );
         aff = sqlite3ExprAffinity(pIdx->aColExpr->a[n].pExpr);
-        if( aff==0 ) aff = SQLITE_AFF_BLOB;
-        pIdx->zColAff[n] = aff;
       }
+      if( aff<SQLITE_AFF_BLOB ) aff = SQLITE_AFF_BLOB;
+      pIdx->zColAff[n] = aff;
     }
     pIdx->zColAff[n] = 0;
   }
@@ -117353,11 +117364,12 @@ SQLITE_PRIVATE void sqlite3TableAffinity(Vdbe *v, Table *pTab, int iReg){
     }
 
     for(i=0; i<pTab->nCol; i++){
+      assert( pTab->aCol[i].affinity!=0 );
       zColAff[i] = pTab->aCol[i].affinity;
     }
     do{
       zColAff[i--] = 0;
-    }while( i>=0 && zColAff[i]==SQLITE_AFF_BLOB );
+    }while( i>=0 && zColAff[i]<=SQLITE_AFF_BLOB );
     pTab->zColAff = zColAff;
   }
   assert( zColAff!=0 );
@@ -127071,8 +127083,6 @@ static const char *columnTypeImpl(
 
   assert( pExpr!=0 );
   assert( pNC->pSrcList!=0 );
-  assert( pExpr->op!=TK_AGG_COLUMN );  /* This routine runes before aggregates
-                                       ** are processed */
   switch( pExpr->op ){
     case TK_COLUMN: {
       /* The expression is a column. Locate the table the column is being
@@ -127394,7 +127404,6 @@ SQLITE_PRIVATE int sqlite3ColumnsFromExprList(
         pColExpr = pColExpr->pRight;
         assert( pColExpr!=0 );
       }
-      assert( pColExpr->op!=TK_AGG_COLUMN );
       if( pColExpr->op==TK_COLUMN ){
         /* For columns use the column name name */
         int iCol = pColExpr->iColumn;
@@ -127462,7 +127471,8 @@ SQLITE_PRIVATE int sqlite3ColumnsFromExprList(
 SQLITE_PRIVATE void sqlite3SelectAddColumnTypeAndCollation(
   Parse *pParse,        /* Parsing contexts */
   Table *pTab,          /* Add column type information to this table */
-  Select *pSelect       /* SELECT used to determine types and collations */
+  Select *pSelect,      /* SELECT used to determine types and collations */
+  char aff              /* Default affinity for columns */
 ){
   sqlite3 *db = pParse->db;
   NameContext sNC;
@@ -127495,7 +127505,7 @@ SQLITE_PRIVATE void sqlite3SelectAddColumnTypeAndCollation(
         pCol->colFlags |= COLFLAG_HASTYPE;
       }
     }
-    if( pCol->affinity==0 ) pCol->affinity = SQLITE_AFF_BLOB;
+    if( pCol->affinity<=SQLITE_AFF_NONE ) pCol->affinity = aff;
     pColl = sqlite3ExprCollSeq(pParse, p);
     if( pColl && pCol->zColl==0 ){
       pCol->zColl = sqlite3DbStrDup(db, pColl->zName);
@@ -127508,7 +127518,7 @@ SQLITE_PRIVATE void sqlite3SelectAddColumnTypeAndCollation(
 ** Given a SELECT statement, generate a Table structure that describes
 ** the result set of that SELECT.
 */
-SQLITE_PRIVATE Table *sqlite3ResultSetOfSelect(Parse *pParse, Select *pSelect){
+SQLITE_PRIVATE Table *sqlite3ResultSetOfSelect(Parse *pParse, Select *pSelect, char aff){
   Table *pTab;
   sqlite3 *db = pParse->db;
   u64 savedFlags;
@@ -127528,7 +127538,7 @@ SQLITE_PRIVATE Table *sqlite3ResultSetOfSelect(Parse *pParse, Select *pSelect){
   pTab->zName = 0;
   pTab->nRowLogEst = 200; assert( 200==sqlite3LogEst(1048576) );
   sqlite3ColumnsFromExprList(pParse, pSelect->pEList, &pTab->nCol, &pTab->aCol);
-  sqlite3SelectAddColumnTypeAndCollation(pParse, pTab, pSelect);
+  sqlite3SelectAddColumnTypeAndCollation(pParse, pTab, pSelect, aff);
   pTab->iPKey = -1;
   if( db->mallocFailed ){
     sqlite3DeleteTable(db, pTab);
@@ -128901,6 +128911,9 @@ static Expr *substExpr(
         if( pNew && ExprHasProperty(pExpr,EP_FromJoin) ){
           pNew->iRightJoinTable = pExpr->iRightJoinTable;
           ExprSetProperty(pNew, EP_FromJoin);
+        }
+        if( pNew && ExprHasProperty(pExpr,EP_Generic) ){
+          ExprSetProperty(pNew, EP_Generic);
         }
         sqlite3ExprDelete(db, pExpr);
         pExpr = pNew;
@@ -130618,7 +130631,8 @@ static void selectAddSubqueryTypeInfo(Walker *pWalker, Select *p){
       Select *pSel = pFrom->pSelect;
       if( pSel ){
         while( pSel->pPrior ) pSel = pSel->pPrior;
-        sqlite3SelectAddColumnTypeAndCollation(pParse, pTab, pSel);
+        sqlite3SelectAddColumnTypeAndCollation(pParse, pTab, pSel,
+                                               SQLITE_AFF_NONE);
       }
     }
   }
@@ -131284,8 +131298,15 @@ SQLITE_PRIVATE int sqlite3Select(
     ** technically harmless for it to be generated multiple times. The
     ** following assert() will detect if something changes to cause
     ** the same subquery to be coded multiple times, as a signal to the
-    ** developers to try to optimize the situation. */
-    assert( pItem->addrFillSub==0 );
+    ** developers to try to optimize the situation.
+    **
+    ** Update 2019-07-24:
+    ** See ticket https://sqlite.org/src/tktview/c52b09c7f38903b1311cec40.
+    ** The dbsqlfuzz fuzzer found a case where the same subquery gets
+    ** coded twice.  So this assert() now becomes a testcase().  It should
+    ** be very rare, though.
+    */
+    testcase( pItem->addrFillSub!=0 );
 
     /* Increment Parse.nHeight by the height of the largest expression
     ** tree referred to by this, the parent select. The child select
@@ -131359,7 +131380,7 @@ SQLITE_PRIVATE int sqlite3Select(
       int retAddr;
       struct SrcList_item *pPrior;
 
-      assert( pItem->addrFillSub==0 );
+      testcase( pItem->addrFillSub==0 ); /* Ticket c52b09c7f38903b1311 */
       pItem->regReturn = ++pParse->nMem;
       topAddr = sqlite3VdbeAddOp2(v, OP_Integer, 0, pItem->regReturn);
       pItem->addrFillSub = topAddr+1;
@@ -136539,7 +136560,7 @@ struct WhereLoop {
       u16 nEq;               /* Number of equality constraints */
       u16 nBtm;              /* Size of BTM vector */
       u16 nTop;              /* Size of TOP vector */
-      u16 nIdxCol;           /* Index column used for ORDER BY */
+      u16 nDistinctCol;      /* Index columns used to sort for DISTINCT */
       Index *pIndex;         /* Index used, or NULL */
     } btree;
     struct {               /* Information for virtual tables */
@@ -137301,9 +137322,9 @@ static void disableTerm(WhereLevel *pLevel, WhereTerm *pTerm){
 ** Code an OP_Affinity opcode to apply the column affinity string zAff
 ** to the n registers starting at base. 
 **
-** As an optimization, SQLITE_AFF_BLOB entries (which are no-ops) at the
-** beginning and end of zAff are ignored.  If all entries in zAff are
-** SQLITE_AFF_BLOB, then no code gets generated.
+** As an optimization, SQLITE_AFF_BLOB and SQLITE_AFF_NONE entries (which
+** are no-ops) at the beginning and end of zAff are ignored.  If all entries
+** in zAff are SQLITE_AFF_BLOB or SQLITE_AFF_NONE, then no code gets generated.
 **
 ** This routine makes its own copy of zAff so that the caller is free
 ** to modify zAff after this routine returns.
@@ -137316,15 +137337,16 @@ static void codeApplyAffinity(Parse *pParse, int base, int n, char *zAff){
   }
   assert( v!=0 );
 
-  /* Adjust base and n to skip over SQLITE_AFF_BLOB entries at the beginning
-  ** and end of the affinity string.
+  /* Adjust base and n to skip over SQLITE_AFF_BLOB and SQLITE_AFF_NONE
+  ** entries at the beginning and end of the affinity string.
   */
-  while( n>0 && zAff[0]==SQLITE_AFF_BLOB ){
+  assert( SQLITE_AFF_NONE<SQLITE_AFF_BLOB );
+  while( n>0 && zAff[0]<=SQLITE_AFF_BLOB ){
     n--;
     base++;
     zAff++;
   }
-  while( n>1 && zAff[n-1]==SQLITE_AFF_BLOB ){
+  while( n>1 && zAff[n-1]<=SQLITE_AFF_BLOB ){
     n--;
   }
 
@@ -142187,6 +142209,7 @@ SQLITE_PRIVATE char sqlite3IndexColumnAffinity(sqlite3 *db, Index *pIdx, int iCo
   if( !pIdx->zColAff ){
     if( sqlite3IndexAffinityStr(db, pIdx)==0 ) return SQLITE_AFF_BLOB;
   }
+  assert( pIdx->zColAff[iCol]!=0 );
   return pIdx->zColAff[iCol];
 }
 #endif
@@ -144576,8 +144599,8 @@ static i8 wherePathSatisfiesOrderBy(
     if( pLoop->wsFlags & WHERE_VIRTUALTABLE ){
       if( pLoop->u.vtab.isOrdered ) obSat = obDone;
       break;
-    }else{
-      pLoop->u.btree.nIdxCol = 0;
+    }else if( wctrlFlags & WHERE_DISTINCTBY ){
+      pLoop->u.btree.nDistinctCol = 0;
     }
     iCur = pWInfo->pTabList->a[pLoop->iTab].iCursor;
 
@@ -144625,7 +144648,8 @@ static i8 wherePathSatisfiesOrderBy(
         assert( nColumn==nKeyCol+1 || !HasRowid(pIndex->pTable) );
         assert( pIndex->aiColumn[nColumn-1]==XN_ROWID
                           || !HasRowid(pIndex->pTable));
-        isOrderDistinct = IsUniqueIndex(pIndex);
+        isOrderDistinct = IsUniqueIndex(pIndex)
+                          && (pLoop->wsFlags & WHERE_SKIPSCAN)==0;
       }
 
       /* Loop through all columns of the index and deal with the ones
@@ -144719,7 +144743,9 @@ static i8 wherePathSatisfiesOrderBy(
             pColl = sqlite3ExprNNCollSeq(pWInfo->pParse, pOrderBy->a[i].pExpr);
             if( sqlite3StrICmp(pColl->zName, pIndex->azColl[j])!=0 ) continue;
           }
-          pLoop->u.btree.nIdxCol = j+1;
+          if( wctrlFlags & WHERE_DISTINCTBY ){
+            pLoop->u.btree.nDistinctCol = j+1;
+          }
           isMatch = 1;
           break;
         }
@@ -146040,7 +146066,7 @@ SQLITE_PRIVATE void sqlite3WhereEnd(WhereInfo *pWInfo){
        && i==pWInfo->nLevel-1  /* Ticket [ef9318757b152e3] 2017-10-21 */
        && (pLoop->wsFlags & WHERE_INDEXED)!=0
        && (pIdx = pLoop->u.btree.pIndex)->hasStat1
-       && (n = pLoop->u.btree.nIdxCol)>0
+       && (n = pLoop->u.btree.nDistinctCol)>0
        && pIdx->aiRowLogEst[n]>=36
       ){
         int r1 = pParse->nMem+1;
@@ -147246,7 +147272,7 @@ SQLITE_PRIVATE int sqlite3WindowRewrite(Parse *pParse, Select *p){
       p->pSrc->a[0].pSelect = pSub;
       sqlite3SrcListAssignCursors(pParse, p->pSrc);
       pSub->selFlags |= SF_Expanded;
-      pTab2 = sqlite3ResultSetOfSelect(pParse, pSub);
+      pTab2 = sqlite3ResultSetOfSelect(pParse, pSub, SQLITE_AFF_NONE);
       if( pTab2==0 ){
         rc = SQLITE_NOMEM;
       }else{
@@ -175266,6 +175292,7 @@ static int fts3AppendToNode(
 
   nPrefix = fts3PrefixCompress(pPrev->a, pPrev->n, zTerm, nTerm);
   nSuffix = nTerm - nPrefix;
+  if( nSuffix<=0 ) return FTS_CORRUPT_VTAB;
   memcpy(pPrev->a, zTerm, nTerm);
   pPrev->n = nTerm;
 
@@ -182827,7 +182854,6 @@ static int nodeAcquire(
   ** increase its reference count and return it.
   */
   if( (pNode = nodeHashLookup(pRtree, iNode))!=0 ){
-    assert( !pParent || !pNode->pParent || pNode->pParent==pParent );
     if( pParent && !pNode->pParent ){
       if( nodeInParentChain(pNode, pParent) ){
         RTREE_IS_CORRUPT(pRtree);
@@ -182835,6 +182861,9 @@ static int nodeAcquire(
       }
       pParent->nRef++;
       pNode->pParent = pParent;
+    }else if( pParent && pNode->pParent && pParent!=pNode->pParent ){
+      RTREE_IS_CORRUPT(pRtree);
+      return SQLITE_CORRUPT_VTAB;
     }
     pNode->nRef++;
     *ppNode = pNode;
@@ -198127,7 +198156,7 @@ static int sessionBufferGrow(SessionBuffer *p, size_t nByte, int *pRc){
     i64 nNew = p->nAlloc ? p->nAlloc : 128;
     do {
       nNew = nNew*2;
-    }while( (nNew-p->nBuf)<nByte );
+    }while( (size_t)(nNew-p->nBuf)<nByte );
 
     aNew = (u8 *)sqlite3_realloc64(p->aBuf, nNew);
     if( 0==aNew ){
@@ -224260,25 +224289,11 @@ SQLITE_API int sqlite3_stmt_init(
 #endif
   return rc;
 }
-#if !defined(_WIN32) && !defined(SQLITE_TEST)
-SQLITE_API int sqlite3_extension_init(
-  sqlite3 *db, 
-  char **pzErrMsg,
-  const sqlite3_api_routines *pApi
-){
-  int rc = SQLITE_OK;
-  SQLITE_EXTENSION_INIT2(pApi);
-#ifndef SQLITE_OMIT_VIRTUALTABLE
-  rc = sqlite3StmtVtabInit(db);
-#endif
-  return rc;
-}
-#endif
 #endif /* SQLITE_CORE */
 #endif /* !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_STMTVTAB) */
 
 /************** End of stmt.c ************************************************/
-#if __LINE__!=224281
+#if __LINE__!=224296
 #undef SQLITE_SOURCE_ID
 #define SQLITE_SOURCE_ID      "2019-07-10 17:32:03 fc82b73eaac8b36950e527f12c4b5dc1e147e6f4ad2217ae43ad82882a88alt2"
 #endif
