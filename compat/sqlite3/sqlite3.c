@@ -75546,7 +75546,7 @@ SQLITE_PRIVATE int sqlite3RealSameAsInt(double r1, sqlite3_int64 i){
   double r2 = (double)i;
   return r1==0.0
       || (memcmp(&r1, &r2, sizeof(r1))==0
-          && i >= -2251799813685248LL && i < 2251799813685248LL);
+          && (i < 0 ? -i : i) >> 51 == 0);
 }
 
 /*
