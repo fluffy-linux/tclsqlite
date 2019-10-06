@@ -1168,7 +1168,7 @@ extern "C" {
 */
 #define SQLITE_VERSION        "3.30.0"
 #define SQLITE_VERSION_NUMBER 3030000
-#define SQLITE_SOURCE_ID      "2019-09-26 20:57:53 352878fe1cbcf7b6803624544bba5a95565d1638d4dd09e91764ddad17889301"
+#define SQLITE_SOURCE_ID      "2019-10-04 15:03:17 c20a35336432025445f9f7e289d0cc3e4003fb17f45a4ce74c6269c407c6e09f"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -16205,6 +16205,7 @@ SQLITE_PRIVATE void sqlite3OsCloseFree(sqlite3_file *);
 #define MUTEX_LOGIC(X)
 #else
 #define MUTEX_LOGIC(X)            X
+SQLITE_API int sqlite3_mutex_held(sqlite3_mutex*);
 #endif /* defined(SQLITE_MUTEX_OMIT) */
 
 /************** End of mutex.h ***********************************************/
@@ -17208,8 +17209,11 @@ struct KeyInfo {
   CollSeq *aColl[1];  /* Collating sequence for each term of the key */
 };
 
-#define KEYINFO_ORDER_DESC    0x01
-#define KEYINFO_ORDER_BIGNULL 0x02
+/*
+** Allowed bit values for entries in the KeyInfo.aSortFlags[] array.
+*/
+#define KEYINFO_ORDER_DESC    0x01    /* DESC sort order */
+#define KEYINFO_ORDER_BIGNULL 0x02    /* NULL is larger than any other value */
 
 /*
 ** This object holds a record which has been parsed out into individual
@@ -17539,6 +17543,7 @@ struct Expr {
                          ** TK_REGISTER: register number
                          ** TK_TRIGGER: 1 -> new, 0 -> old
                          ** EP_Unlikely:  134217728 times likelihood
+                         ** TK_IN: ephemerial table holding RHS
                          ** TK_SELECT_COLUMN: Number of columns on the LHS
                          ** TK_SELECT: 1st register of result vector */
   ynVar iColumn;         /* TK_COLUMN: column index.  -1 for rowid.
@@ -29314,9 +29319,10 @@ SQLITE_PRIVATE void sqlite3TreeViewExpr(TreeView *pView, const Expr *pExpr, u8 m
 
     case TK_COLLATE: {
       /* COLLATE operators without the EP_Collate flag are intended to
-      ** emulate collation associated with a table column.  Explicit
-      ** COLLATE operators that appear in the original SQL always have
-      ** the EP_Collate bit set */
+      ** emulate collation associated with a table column.  These show
+      ** up in the treeview output as "SOFT-COLLATE".  Explicit COLLATE
+      ** operators that appear in the original SQL always have the
+      ** EP_Collate bit set and appear in treeview output as just "COLLATE" */
       sqlite3TreeViewLine(pView, "%sCOLLATE %Q%s",
         !ExprHasProperty(pExpr, EP_Collate) ? "SOFT-" : "",
         pExpr->u.zToken, zFlgs);
@@ -32669,13 +32675,29 @@ SQLITE_PRIVATE const char *sqlite3OpcodeName(int i){
 # include <sys/param.h>
 #endif /* SQLITE_ENABLE_LOCKING_STYLE */
 
-#if defined(__APPLE__) && ((__MAC_OS_X_VERSION_MIN_REQUIRED > 1050) || \
-                           (__IPHONE_OS_VERSION_MIN_REQUIRED > 2000))
-#  if (!defined(TARGET_OS_EMBEDDED) || (TARGET_OS_EMBEDDED==0)) \
-       && (!defined(TARGET_IPHONE_SIMULATOR) || (TARGET_IPHONE_SIMULATOR==0))
-#    define HAVE_GETHOSTUUID 1
-#  else
-#    warning "gethostuuid() is disabled."
+/*
+** Try to determine if gethostuuid() is available based on standard
+** macros.  This might sometimes compute the wrong value for some
+** obscure platforms.  For those cases, simply compile with one of
+** the following:
+**
+**    -DHAVE_GETHOSTUUID=0
+**    -DHAVE_GETHOSTUUID=1
+**
+** None if this matters except when building on Apple products with
+** -DSQLITE_ENABLE_LOCKING_STYLE.
+*/
+#ifndef HAVE_GETHOSTUUID
+# define HAVE_GETHOSTUUID 0
+# if defined(__APPLE__) && ((__MAC_OS_X_VERSION_MIN_REQUIRED > 1050) || \
+                            (__IPHONE_OS_VERSION_MIN_REQUIRED > 2000))
+#    if (!defined(TARGET_OS_EMBEDDED) || (TARGET_OS_EMBEDDED==0)) \
+         && (!defined(TARGET_IPHONE_SIMULATOR) || (TARGET_IPHONE_SIMULATOR==0))
+#      undef HAVE_GETHOSTUUID
+#      define HAVE_GETHOSTUUID 1
+#    else
+#      warning "gethostuuid() is disabled."
+#    endif
 #  endif
 #endif
 
@@ -39726,7 +39748,7 @@ SQLITE_API int sqlite3_hostid_num = 0;
 
 #define PROXY_HOSTIDLEN    16  /* conch file host id length */
 
-#ifdef HAVE_GETHOSTUUID
+#if HAVE_GETHOSTUUID
 /* Not always defined in the headers as it ought to be */
 extern int gethostuuid(uuid_t id, const struct timespec *wait);
 #endif
@@ -39737,7 +39759,7 @@ extern int gethostuuid(uuid_t id, const struct timespec *wait);
 static int proxyGetHostID(unsigned char *pHostID, int *pError){
   assert(PROXY_HOSTIDLEN == sizeof(uuid_t));
   memset(pHostID, 0, PROXY_HOSTIDLEN);
-#ifdef HAVE_GETHOSTUUID
+#if HAVE_GETHOSTUUID
   {
     struct timespec timeout = {1, 0}; /* 1 sec timeout */
     if( gethostuuid(pHostID, &timeout) ){
@@ -84605,7 +84627,7 @@ static void memTracePrint(Mem *p){
 #endif
 #ifndef SQLITE_OMIT_FLOATING_POINT
   }else if( p->flags & MEM_Real ){
-    printf(" r:%g", p->u.r);
+    printf(" r:%.17g", p->u.r);
 #endif
   }else if( sqlite3VdbeMemIsRowSet(p) ){
     printf(" (rowset)");
@@ -102669,7 +102691,8 @@ SQLITE_PRIVATE int sqlite3ExprCompare(Parse *pParse, Expr *pA, Expr *pB, int iTa
     ){
       if( pA->iColumn!=pB->iColumn ) return 2;
       if( pA->op2!=pB->op2 ) return 2;
-      if( pA->iTable!=pB->iTable 
+      if( pA->op!=TK_IN
+       && pA->iTable!=pB->iTable 
        && (pA->iTable!=iTab || NEVER(pB->iTable>=0)) ) return 2;
     }
   }
@@ -121327,7 +121350,11 @@ static const sqlite3_api_routines sqlite3Apis = {
   sqlite3_stmt_isexplain,
   sqlite3_value_frombind,
   /* Version 3.30.0 and later */
+#ifndef SQLITE_OMIT_VIRTUALTABLE
   sqlite3_drop_modules,
+#else
+  0,
+#endif
 };
 
 /*
@@ -162499,6 +162526,18 @@ SQLITE_PRIVATE int sqlite3FtsUnicodeIsdiacritic(int);
   SQLITE_EXTENSION_INIT1
 #endif
 
+/*
+** The following are copied from sqliteInt.h.
+**
+** Constants for the largest and smallest possible 64-bit signed integers.
+** These macros are designed to work correctly on both 32-bit and 64-bit
+** compilers.
+*/
+#ifndef SQLITE_AMALGAMATION
+# define LARGEST_INT64  (0xffffffff|(((sqlite3_int64)0x7fffffff)<<32))
+# define SMALLEST_INT64 (((sqlite3_int64)-1) - LARGEST_INT64)
+#endif
+
 static int fts3EvalNext(Fts3Cursor *pCsr);
 static int fts3EvalStart(Fts3Cursor *pCsr);
 static int fts3TermSegReaderCursor(
@@ -164279,10 +164318,11 @@ static void fts3ColumnlistCopy(char **pp, char **ppPoslist){
 }
 
 /*
-** Value used to signify the end of an position-list. This is safe because
-** it is not possible to have a document with 2^31 terms.
+** Value used to signify the end of an position-list. This must be
+** as large or larger than any value that might appear on the
+** position-list, even a position list that has been corrupted.
 */
-#define POSITION_LIST_END 0x7fffffff
+#define POSITION_LIST_END LARGEST_INT64
 
 /*
 ** This function is used to help parse position-lists. When this function is
@@ -164358,14 +164398,14 @@ static int fts3PoslistMerge(
       fts3GetVarint32(&p1[1], &iCol1);
       if( iCol1==0 ) return FTS_CORRUPT_VTAB;
     }
-    else if( *p1==POS_END ) iCol1 = POSITION_LIST_END;
+    else if( *p1==POS_END ) iCol1 = 0x7fffffff;
     else iCol1 = 0;
 
     if( *p2==POS_COLUMN ){
       fts3GetVarint32(&p2[1], &iCol2);
       if( iCol2==0 ) return FTS_CORRUPT_VTAB;
     }
-    else if( *p2==POS_END ) iCol2 = POSITION_LIST_END;
+    else if( *p2==POS_END ) iCol2 = 0x7fffffff;
     else iCol2 = 0;
 
     if( iCol1==iCol2 ){
@@ -165374,18 +165414,6 @@ static int fts3NextMethod(sqlite3_vtab_cursor *pCursor){
   assert( ((Fts3Table *)pCsr->base.pVtab)->pSegments==0 );
   return rc;
 }
-
-/*
-** The following are copied from sqliteInt.h.
-**
-** Constants for the largest and smallest possible 64-bit signed integers.
-** These macros are designed to work correctly on both 32-bit and 64-bit
-** compilers.
-*/
-#ifndef SQLITE_AMALGAMATION
-# define LARGEST_INT64  (0xffffffff|(((sqlite3_int64)0x7fffffff)<<32))
-# define SMALLEST_INT64 (((sqlite3_int64)-1) - LARGEST_INT64)
-#endif
 
 /*
 ** If the numeric type of argument pVal is "integer", then return it
@@ -176117,14 +176145,14 @@ static int nodeReaderInit(NodeReader *p, const char *aNode, int nNode){
   p->nNode = nNode;
 
   /* Figure out if this is a leaf or an internal node. */
-  if( p->aNode[0] ){
+  if( aNode && aNode[0] ){
     /* An internal node. */
     p->iOff = 1 + sqlite3Fts3GetVarint(&p->aNode[1], &p->iChild);
   }else{
     p->iOff = 1;
   }
 
-  return nodeReaderNext(p);
+  return aNode ? nodeReaderNext(p) : SQLITE_OK;
 }
 
 /*
@@ -176616,8 +176644,8 @@ static int fts3IncrmergeLoad(
         NodeReader reader;
         pNode = &pWriter->aNodeWriter[i];
 
-        rc = nodeReaderInit(&reader, pNode->block.a, pNode->block.n);
-        if( reader.aNode ){
+        if( pNode->block.a){
+          rc = nodeReaderInit(&reader, pNode->block.a, pNode->block.n);
           while( reader.aNode && rc==SQLITE_OK ) rc = nodeReaderNext(&reader);
           blobGrowBuffer(&pNode->key, reader.term.n, &rc);
           if( rc==SQLITE_OK ){
@@ -220578,7 +220606,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2019-09-26 20:57:53 352878fe1cbcf7b6803624544bba5a95565d1638d4dd09e91764ddad17889301", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2019-10-04 15:03:17 c20a35336432025445f9f7e289d0cc3e4003fb17f45a4ce74c6269c407c6e09f", -1, SQLITE_TRANSIENT);
 }
 
 /*
@@ -225458,9 +225486,9 @@ SQLITE_API int sqlite3_stmt_init(
 #endif /* !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_STMTVTAB) */
 
 /************** End of stmt.c ************************************************/
-#if __LINE__!=225461
+#if __LINE__!=225489
 #undef SQLITE_SOURCE_ID
-#define SQLITE_SOURCE_ID      "2019-09-26 20:57:53 352878fe1cbcf7b6803624544bba5a95565d1638d4dd09e91764ddad1788alt2"
+#define SQLITE_SOURCE_ID      "2019-10-04 15:03:17 c20a35336432025445f9f7e289d0cc3e4003fb17f45a4ce74c6269c407c6alt2"
 #endif
 /* Return the source-id for this library */
 SQLITE_API const char *sqlite3_sourceid(void){ return SQLITE_SOURCE_ID; }
