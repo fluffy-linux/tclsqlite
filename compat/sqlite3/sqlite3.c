@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.30.0.  By combining all the individual C code files into this
+** version 3.30.1.  By combining all the individual C code files into this
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -1166,9 +1166,9 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.30.0"
-#define SQLITE_VERSION_NUMBER 3030000
-#define SQLITE_SOURCE_ID      "2019-10-04 15:03:17 c20a35336432025445f9f7e289d0cc3e4003fb17f45a4ce74c6269c407c6e09f"
+#define SQLITE_VERSION        "3.30.1"
+#define SQLITE_VERSION_NUMBER 3030001
+#define SQLITE_SOURCE_ID      "2019-10-10 20:19:45 18db032d058f1436ce3dea84081f4ee5a0f2259ad97301d43c426bc7f3df1b0b"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -17651,9 +17651,13 @@ struct Expr {
 ** True if the expression passed as an argument was a function with
 ** an OVER() clause (a window function).
 */
-#define IsWindowFunc(p) ( \
+#ifdef SQLITE_OMIT_WINDOWFUNC
+# define IsWindowFunc(p) 0
+#else
+# define IsWindowFunc(p) ( \
     ExprHasProperty((p), EP_WinFunc) && p->y.pWin->eFrmType!=TK_FILTER \
-)
+ )
+#endif
 
 /*
 ** A list of expressions.  Each expression may optionally have a
@@ -20435,7 +20439,8 @@ struct sqlite3_value {
 ** True if Mem X is a NULL-nochng type.
 */
 #define MemNullNochng(X) \
-  ((X)->flags==(MEM_Null|MEM_Zero) && (X)->n==0 && (X)->u.nZero==0)
+  (((X)->flags&MEM_TypeMask)==(MEM_Null|MEM_Zero) \
+    && (X)->n==0 && (X)->u.nZero==0)
 
 /*
 ** Return true if a memory cell is not marked as invalid.  This macro
@@ -77391,7 +77396,7 @@ SQLITE_PRIVATE int sqlite3VdbeAssertMayAbort(Vdbe *v, int mayAbort){
     int opcode = pOp->opcode;
     if( opcode==OP_Destroy || opcode==OP_VUpdate || opcode==OP_VRename 
      || opcode==OP_VDestroy
-     || (opcode==OP_Function0 && pOp->p4.pFunc->funcFlags&SQLITE_FUNC_INTERNAL)
+     || (opcode==OP_ParseSchema && pOp->p4.z==0)
      || ((opcode==OP_Halt || opcode==OP_HaltIfNull) 
       && ((pOp->p1)!=SQLITE_OK && pOp->p2==OE_Abort))
     ){
@@ -88700,23 +88705,27 @@ case OP_SeekRowid: {        /* jump, in3 */
   pIn3 = &aMem[pOp->p3];
   testcase( pIn3->flags & MEM_Int );
   testcase( pIn3->flags & MEM_IntReal );
+  testcase( pIn3->flags & MEM_Real );
+  testcase( (pIn3->flags & (MEM_Str|MEM_Int))==MEM_Str );
   if( (pIn3->flags & (MEM_Int|MEM_IntReal))==0 ){
-    /* Make sure pIn3->u.i contains a valid integer representation of
-    ** the key value, but do not change the datatype of the register, as
-    ** other parts of the perpared statement might be depending on the
-    ** current datatype. */
-    u16 origFlags = pIn3->flags;
-    int isNotInt;
-    applyAffinity(pIn3, SQLITE_AFF_NUMERIC, encoding);
-    isNotInt = (pIn3->flags & MEM_Int)==0;
-    pIn3->flags = origFlags;
-    if( isNotInt ) goto jump_to_p2;
+    /* If pIn3->u.i does not contain an integer, compute iKey as the
+    ** integer value of pIn3.  Jump to P2 if pIn3 cannot be converted
+    ** into an integer without loss of information.  Take care to avoid
+    ** changing the datatype of pIn3, however, as it is used by other
+    ** parts of the prepared statement. */
+    Mem x = pIn3[0];
+    applyAffinity(&x, SQLITE_AFF_NUMERIC, encoding);
+    if( (x.flags & MEM_Int)==0 ) goto jump_to_p2;
+    iKey = x.u.i;
+    goto notExistsWithKey;
   }
   /* Fall through into OP_NotExists */
 case OP_NotExists:          /* jump, in3 */
   pIn3 = &aMem[pOp->p3];
   assert( (pIn3->flags & MEM_Int)!=0 || pOp->opcode==OP_SeekRowid );
   assert( pOp->p1>=0 && pOp->p1<p->nCursor );
+  iKey = pIn3->u.i;
+notExistsWithKey:
   pC = p->apCsr[pOp->p1];
   assert( pC!=0 );
 #ifdef SQLITE_DEBUG
@@ -88727,7 +88736,6 @@ case OP_NotExists:          /* jump, in3 */
   pCrsr = pC->uc.pCursor;
   assert( pCrsr!=0 );
   res = 0;
-  iKey = pIn3->u.i;
   rc = sqlite3BtreeMovetoUnpacked(pCrsr, 0, iKey, 0, &res);
   assert( rc==SQLITE_OK || res==0 );
   pC->movetoTarget = iKey;  /* Used by OP_Delete */
@@ -93892,20 +93900,16 @@ static SorterCompare vdbeSorterGetCompare(VdbeSorter *p){
 */
 static int vdbeSorterSort(SortSubtask *pTask, SorterList *pList){
   int i;
-  SorterRecord **aSlot;
   SorterRecord *p;
   int rc;
+  SorterRecord *aSlot[64];
 
   rc = vdbeSortAllocUnpacked(pTask);
   if( rc!=SQLITE_OK ) return rc;
 
   p = pList->pList;
   pTask->xCompare = vdbeSorterGetCompare(pTask->pSorter);
-
-  aSlot = (SorterRecord **)sqlite3MallocZero(64 * sizeof(SorterRecord *));
-  if( !aSlot ){
-    return SQLITE_NOMEM_BKPT;
-  }
+  memset(aSlot, 0, sizeof(aSlot));
 
   while( p ){
     SorterRecord *pNext;
@@ -93930,13 +93934,12 @@ static int vdbeSorterSort(SortSubtask *pTask, SorterList *pList){
   }
 
   p = 0;
-  for(i=0; i<64; i++){
+  for(i=0; i<ArraySize(aSlot); i++){
     if( aSlot[i]==0 ) continue;
     p = p ? vdbeSorterMerge(pTask, p, aSlot[i]) : aSlot[i];
   }
   pList->pList = p;
 
-  sqlite3_free(aSlot);
   assert( pTask->pUnpacked->errCode==SQLITE_OK 
        || pTask->pUnpacked->errCode==SQLITE_NOMEM 
   );
@@ -102881,6 +102884,7 @@ static int impliesNotNullRow(Walker *pWalker, Expr *pExpr){
     case TK_CASE:
     case TK_IN:
     case TK_FUNCTION:
+    case TK_TRUTH:
       testcase( pExpr->op==TK_ISNOT );
       testcase( pExpr->op==TK_ISNULL );
       testcase( pExpr->op==TK_NOTNULL );
@@ -102889,6 +102893,7 @@ static int impliesNotNullRow(Walker *pWalker, Expr *pExpr){
       testcase( pExpr->op==TK_CASE );
       testcase( pExpr->op==TK_IN );
       testcase( pExpr->op==TK_FUNCTION );
+      testcase( pExpr->op==TK_TRUTH );
       return WRC_Prune;
     case TK_COLUMN:
       if( pWalker->u.iCur==pExpr->iTable ){
@@ -103829,6 +103834,7 @@ SQLITE_PRIVATE void sqlite3AlterBeginAddColumn(Parse *pParse, SrcList *pSrc){
     goto exit_begin_add_column;
   }
 
+  sqlite3MayAbort(pParse);
   assert( pTab->addColOffset>0 );
   iDb = sqlite3SchemaToIndex(db, pTab->pSchema);
 
@@ -124981,6 +124987,18 @@ SQLITE_PRIVATE int sqlite3IndexHasDuplicateRootPage(Index *pIndex){
   return 0;
 }
 
+/* forward declaration */
+static int sqlite3Prepare(
+  sqlite3 *db,              /* Database handle. */
+  const char *zSql,         /* UTF-8 encoded SQL statement. */
+  int nBytes,               /* Length of zSql in bytes. */
+  u32 prepFlags,            /* Zero or more SQLITE_PREPARE_* flags */
+  Vdbe *pReprepare,         /* VM being reprepared */
+  sqlite3_stmt **ppStmt,    /* OUT: A pointer to the prepared statement */
+  const char **pzTail       /* OUT: End of parsed string */
+);
+
+
 /*
 ** This is the callback routine for the code that initializes the
 ** database.  See sqlite3Init() below for additional information.
@@ -125030,7 +125048,8 @@ SQLITE_PRIVATE int sqlite3InitCallback(void *pInit, int argc, char **argv, char 
     db->init.newTnum = sqlite3Atoi(argv[3]);
     db->init.orphanTrigger = 0;
     db->init.azInit = argv;
-    TESTONLY(rcp = ) sqlite3_prepare(db, argv[4], -1, &pStmt, 0);
+    pStmt = 0;
+    TESTONLY(rcp = ) sqlite3Prepare(db, argv[4], -1, 0, 0, &pStmt, 0);
     rc = db->errCode;
     assert( (rc&0xFF)==(rcp&0xFF) );
     db->init.iDb = saved_iDb;
@@ -125964,9 +125983,9 @@ static void clearSelect(sqlite3 *db, Select *p, int bFree){
     if( OK_IF_ALWAYS_TRUE(p->pWinDefn) ){
       sqlite3WindowListDelete(db, p->pWinDefn);
     }
+    assert( p->pWin==0 );
 #endif
     if( OK_IF_ALWAYS_TRUE(p->pWith) ) sqlite3WithDelete(db, p->pWith);
-    assert( p->pWin==0 );
     if( bFree ) sqlite3DbFreeNN(db, p);
     p = pPrior;
     bFree = 1;
@@ -129367,6 +129386,14 @@ static Expr *substExpr(
     }else{
       substExprList(pSubst, pExpr->x.pList);
     }
+#ifndef SQLITE_OMIT_WINDOWFUNC
+    if( ExprHasProperty(pExpr, EP_WinFunc) ){
+      Window *pWin = pExpr->y.pWin;
+      pWin->pFilter = substExpr(pSubst, pWin->pFilter);
+      substExprList(pSubst, pWin->pPartition);
+      substExprList(pSubst, pWin->pOrderBy);
+    }
+#endif
   }
   return pExpr;
 }
@@ -207714,7 +207741,7 @@ static int sqlite3Fts5ConfigSetValue(
     if( SQLITE_INTEGER==sqlite3_value_numeric_type(pVal) ){
       pgsz = sqlite3_value_int(pVal);
     }
-    if( pgsz<=0 || pgsz>FTS5_MAX_PAGE_SIZE ){
+    if( pgsz<32 || pgsz>FTS5_MAX_PAGE_SIZE ){
       *pbBadkey = 1;
     }else{
       pConfig->pgsz = pgsz;
@@ -217189,7 +217216,8 @@ static void fts5IndexIntegrityCheckSegment(
   if( pSeg->pgnoFirst==0 ) return;
 
   fts5IndexPrepareStmt(p, &pStmt, sqlite3_mprintf(
-      "SELECT segid, term, (pgno>>1), (pgno&1) FROM %Q.'%q_idx' WHERE segid=%d",
+      "SELECT segid, term, (pgno>>1), (pgno&1) FROM %Q.'%q_idx' WHERE segid=%d "
+      "ORDER BY 1, 2",
       pConfig->zDb, pConfig->zName, pSeg->iSegid
   ));
 
@@ -220606,7 +220634,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2019-10-04 15:03:17 c20a35336432025445f9f7e289d0cc3e4003fb17f45a4ce74c6269c407c6e09f", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2019-10-10 20:19:45 18db032d058f1436ce3dea84081f4ee5a0f2259ad97301d43c426bc7f3df1b0b", -1, SQLITE_TRANSIENT);
 }
 
 /*
@@ -225486,9 +225514,9 @@ SQLITE_API int sqlite3_stmt_init(
 #endif /* !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_STMTVTAB) */
 
 /************** End of stmt.c ************************************************/
-#if __LINE__!=225489
+#if __LINE__!=225517
 #undef SQLITE_SOURCE_ID
-#define SQLITE_SOURCE_ID      "2019-10-04 15:03:17 c20a35336432025445f9f7e289d0cc3e4003fb17f45a4ce74c6269c407c6alt2"
+#define SQLITE_SOURCE_ID      "2019-10-10 20:19:45 18db032d058f1436ce3dea84081f4ee5a0f2259ad97301d43c426bc7f3dfalt2"
 #endif
 /* Return the source-id for this library */
 SQLITE_API const char *sqlite3_sourceid(void){ return SQLITE_SOURCE_ID; }
