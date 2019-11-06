@@ -86992,11 +86992,11 @@ case OP_Affinity: {
       ** that will fit in 6 bytes, then change the type to MEM_IntReal
       ** so that we keep the high-resolution integer value but know that
       ** the type really wants to be REAL. */
-      testcase( pIn1->u.i==140737488355328LL );
-      testcase( pIn1->u.i==140737488355327LL );
-      testcase( pIn1->u.i==-140737488355328LL );
-      testcase( pIn1->u.i==-140737488355329LL );
-      if( pIn1->u.i<=140737488355327LL && pIn1->u.i>=-140737488355328LL ){
+      testcase( pIn1->u.i==((sqlite3_int64)1)<<47 );
+      testcase( pIn1->u.i==(((sqlite3_int64)1)<<47) - 1 );
+      testcase( pIn1->u.i==((sqlite3_int64)-1)<<47 );
+      testcase( pIn1->u.i==(((sqlite3_int64)-1)<<47) - 1 );
+      if( pIn1->u.i<(((sqlite3_int64)1)<<47) && pIn1->u.i>=(((sqlite3_int64)-1)<<47) ){
         pIn1->flags |= MEM_IntReal;
         pIn1->flags &= ~MEM_Int;
       }else{
@@ -87168,7 +87168,7 @@ case OP_MakeRecord: {
       testcase( uu==32767 );             testcase( uu==32768 );
       testcase( uu==8388607 );           testcase( uu==8388608 );
       testcase( uu==2147483647 );        testcase( uu==2147483648 );
-      testcase( uu==140737488355327LL ); testcase( uu==140737488355328LL );
+      testcase( uu==(((sqlite3_int64)1)<<47) - 1); testcase( uu==((sqlite3_int64)1)<<47 );
       if( uu<=127 ){
         if( (i&1)==i && file_format>=4 ){
           pRec->uTemp = 8+(u32)uu;
@@ -87185,7 +87185,7 @@ case OP_MakeRecord: {
       }else if( uu<=2147483647 ){
         nData += 4;
         pRec->uTemp = 4;
-      }else if( uu<=140737488355327LL ){
+      }else if( uu<(((sqlite3_int64)1)<<47) ){
         nData += 6;
         pRec->uTemp = 5;
       }else{
