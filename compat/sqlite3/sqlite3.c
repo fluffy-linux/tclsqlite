@@ -86994,9 +86994,9 @@ case OP_Affinity: {
       ** the type really wants to be REAL. */
       testcase( pIn1->u.i==((sqlite3_int64)1)<<47 );
       testcase( pIn1->u.i==(((sqlite3_int64)1)<<47) - 1 );
-      testcase( pIn1->u.i==((sqlite3_int64)-1)<<47 );
-      testcase( pIn1->u.i==(((sqlite3_int64)-1)<<47) - 1 );
-      if( pIn1->u.i<(((sqlite3_int64)1)<<47) && pIn1->u.i>=(((sqlite3_int64)-1)<<47) ){
+      testcase( pIn1->u.i==-((sqlite3_int64)1)<<47);
+      testcase( pIn1->u.i==-(((sqlite3_int64)1)<<47) - 1 );
+      if( pIn1->u.i<(((sqlite3_int64)1)<<47) && pIn1->u.i>-(((sqlite3_int64)1)<<47) ){
         pIn1->flags |= MEM_IntReal;
         pIn1->flags &= ~MEM_Int;
       }else{
