@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.30.1.  By combining all the individual C code files into this
+** version 3.30.2.  By combining all the individual C code files into this
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -1166,7 +1166,7 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.30.1.2"
+#define SQLITE_VERSION        "3.30.2"
 #define SQLITE_VERSION_NUMBER 3030001
 #define SQLITE_SOURCE_ID      "2019-10-10 20:19:45 18db032d058f1436ce3dea84081f4ee5a0f2259ad97301d43c426bc7f3df1b0b"
 
@@ -2785,6 +2785,7 @@ struct sqlite3_mem_methods {
 ** memory allocation statistics. ^(When memory allocation statistics are
 ** disabled, the following SQLite interfaces become non-operational:
 **   <ul>
+**   <li> [sqlite3_hard_heap_limit64()]
 **   <li> [sqlite3_memory_used()]
 **   <li> [sqlite3_memory_highwater()]
 **   <li> [sqlite3_soft_heap_limit64()]
@@ -7176,6 +7177,9 @@ SQLITE_API int sqlite3_db_release_memory(sqlite3*);
 /*
 ** CAPI3REF: Impose A Limit On Heap Size
 **
+** These interfaces impose limits on the amount of heap memory that will be
+** by all database connections within a single process.
+**
 ** ^The sqlite3_soft_heap_limit64() interface sets and/or queries the
 ** soft limit on the amount of heap memory that may be allocated by SQLite.
 ** ^SQLite strives to keep heap memory utilization below the soft heap
@@ -7186,20 +7190,41 @@ SQLITE_API int sqlite3_db_release_memory(sqlite3*);
 ** an [SQLITE_NOMEM] error.  In other words, the soft heap limit 
 ** is advisory only.
 **
-** ^The return value from sqlite3_soft_heap_limit64() is the size of
-** the soft heap limit prior to the call, or negative in the case of an
+** ^The sqlite3_hard_heap_limit64(N) interface sets a hard upper bound of
+** N bytes on the amount of memory that will be allocated.  ^The
+** sqlite3_hard_heap_limit64(N) interface is similar to
+** sqlite3_soft_heap_limit64(N) except that memory allocations will fail
+** when the hard heap limit is reached.
+**
+** ^The return value from both sqlite3_soft_heap_limit64() and
+** sqlite3_hard_heap_limit64() is the size of
+** the heap limit prior to the call, or negative in the case of an
 ** error.  ^If the argument N is negative
-** then no change is made to the soft heap limit.  Hence, the current
-** size of the soft heap limit can be determined by invoking
-** sqlite3_soft_heap_limit64() with a negative argument.
+** then no change is made to the heap limit.  Hence, the current
+** size of heap limits can be determined by invoking
+** sqlite3_soft_heap_limit64(-1) or sqlite3_hard_heap_limit(-1).
 **
-** ^If the argument N is zero then the soft heap limit is disabled.
+** ^Setting the heap limits to zero disables the heap limiter mechanism.
 **
-** ^(The soft heap limit is not enforced in the current implementation
+** ^The soft heap limit may not be greater than the hard heap limit.
+** ^If the hard heap limit is enabled and if sqlite3_soft_heap_limit(N)
+** is invoked with a value of N that is greater than the hard heap limit,
+** the the soft heap limit is set to the value of the hard heap limit.
+** ^The soft heap limit is automatically enabled whenever the hard heap
+** limit is enabled. ^When sqlite3_hard_heap_limit64(N) is invoked and
+** the soft heap limit is outside the range of 1..N, then the soft heap
+** limit is set to N.  ^Invoking sqlite3_soft_heap_limit64(0) when the
+** hard heap limit is enabled makes the soft heap limit equal to the
+** hard heap limit.
+**
+** The memory allocation limits can also be adjusted using
+** [PRAGMA soft_heap_limit] and [PRAGMA hard_heap_limit].
+**
+** ^(The heap limits are not enforced in the current implementation
 ** if one or more of following conditions are true:
 **
 ** <ul>
-** <li> The soft heap limit is set to zero.
+** <li> The limit value is set to zero.
 ** <li> Memory accounting is disabled using a combination of the
 **      [sqlite3_config]([SQLITE_CONFIG_MEMSTATUS],...) start-time option and
 **      the [SQLITE_DEFAULT_MEMSTATUS] compile-time option.
@@ -7210,21 +7235,11 @@ SQLITE_API int sqlite3_db_release_memory(sqlite3*);
 **      from the heap.
 ** </ul>)^
 **
-** Beginning with SQLite [version 3.7.3] ([dateof:3.7.3]), 
-** the soft heap limit is enforced
-** regardless of whether or not the [SQLITE_ENABLE_MEMORY_MANAGEMENT]
-** compile-time option is invoked.  With [SQLITE_ENABLE_MEMORY_MANAGEMENT],
-** the soft heap limit is enforced on every memory allocation.  Without
-** [SQLITE_ENABLE_MEMORY_MANAGEMENT], the soft heap limit is only enforced
-** when memory is allocated by the page cache.  Testing suggests that because
-** the page cache is the predominate memory user in SQLite, most
-** applications will achieve adequate soft heap limit enforcement without
-** the use of [SQLITE_ENABLE_MEMORY_MANAGEMENT].
-**
-** The circumstances under which SQLite will enforce the soft heap limit may
+** The circumstances under which SQLite will enforce the heap limits may
 ** changes in future releases of SQLite.
 */
 SQLITE_API sqlite3_int64 sqlite3_soft_heap_limit64(sqlite3_int64 N);
+SQLITE_API sqlite3_int64 sqlite3_hard_heap_limit64(sqlite3_int64 N);
 
 /*
 ** CAPI3REF: Deprecated Soft Heap Limit Interface
@@ -26781,18 +26796,26 @@ SQLITE_API int sqlite3_release_memory(int n){
 }
 
 /*
+** Default value of the hard heap limit.  0 means "no limit".
+*/
+#ifndef SQLITE_MAX_MEMORY
+# define SQLITE_MAX_MEMORY 0
+#endif
+
+/*
 ** State information local to the memory allocation subsystem.
 */
 static SQLITE_WSD struct Mem0Global {
   sqlite3_mutex *mutex;         /* Mutex to serialize access */
   size_t alarmThreshold;        /* The soft heap limit */
+  size_t hardLimit;             /* The hard upper bound on memory */
 
   /*
   ** True if heap is nearly "full" where "full" is defined by the
   ** sqlite3_soft_heap_limit() setting.
   */
   int nearlyFull;
-} mem0 = { 0, 0, 0 };
+} mem0 = { 0, SQLITE_MAX_MEMORY, SQLITE_MAX_MEMORY, 0 };
 
 #define mem0 GLOBAL(struct Mem0Global, mem0)
 
@@ -26822,8 +26845,15 @@ SQLITE_API int sqlite3_memory_alarm(
 #endif
 
 /*
-** Set the soft heap-size limit for the library. Passing a zero or 
-** negative value indicates no limit.
+** Set the soft heap-size limit for the library.  An argument of
+** zero disables the limit.  A negative argument is a no-op used to
+** obtain the return value.
+**
+** The return value is the value of the heap limit just before this
+** interface was called.
+**
+** If the hard heap limit is enabled, then the soft heap limit cannot
+** be disabled nor raised above the hard heap limit.
 */
 SQLITE_API sqlite3_int64 sqlite3_soft_heap_limit64(sqlite3_int64 n){
   size_t priorLimit;
@@ -26837,6 +26867,9 @@ SQLITE_API sqlite3_int64 sqlite3_soft_heap_limit64(sqlite3_int64 n){
   if( n<0 ){
     sqlite3_mutex_leave(mem0.mutex);
     return priorLimit;
+  }
+  if( mem0.hardLimit!=0 && (n>(sqlite3_int64)mem0.hardLimit || n==0) ){
+    n = mem0.hardLimit;
   }
   mem0.alarmThreshold = n;
   nUsed = sqlite3StatusValue(SQLITE_STATUS_MEMORY_USED);
@@ -26854,6 +26887,37 @@ SQLITE_API void sqlite3_soft_heap_limit(int n){
   sqlite3_soft_heap_limit64(n);
 }
 #endif
+
+/*
+** Set the hard heap-size limit for the library. An argument of zero
+** disables the hard heap limit.  A negative argument is a no-op used
+** to obtain the return value without affecting the hard heap limit.
+**
+** The return value is the value of the hard heap limit just prior to
+** calling this interface.
+**
+** Setting the hard heap limit will also activate the soft heap limit
+** and constrain the soft heap limit to be no more than the hard heap
+** limit.
+*/
+SQLITE_API sqlite3_int64 sqlite3_hard_heap_limit64(sqlite3_int64 n){
+  size_t priorLimit;
+#ifndef SQLITE_OMIT_AUTOINIT
+  int rc = sqlite3_initialize();
+  if( rc ) return -1;
+#endif
+  sqlite3_mutex_enter(mem0.mutex);
+  priorLimit = mem0.hardLimit;
+  if( n>=0 ){
+    mem0.hardLimit = n;
+    if( n<(sqlite3_int64)mem0.alarmThreshold || mem0.alarmThreshold==0 ){
+      mem0.alarmThreshold = n;
+    }
+  }
+  sqlite3_mutex_leave(mem0.mutex);
+  return priorLimit;
+}
+
 
 /*
 ** Initialize the memory allocation subsystem.
@@ -26943,19 +27007,19 @@ static void mallocWithAlarm(size_t n, void **pp){
   ** following xRoundup() call. */
   nFull = sqlite3GlobalConfig.m2.xRoundup(n);
 
-#ifdef SQLITE_MAX_MEMORY
-  if( sqlite3StatusValue(SQLITE_STATUS_MEMORY_USED)+nFull>SQLITE_MAX_MEMORY ){
-    *pp = 0;
-    return;
-  }
-#endif
-
   sqlite3StatusHighwater(SQLITE_STATUS_MALLOC_SIZE, n);
   if( mem0.alarmThreshold>0 ){
     size_t nUsed = sqlite3StatusValue(SQLITE_STATUS_MEMORY_USED);
     if( (nUsed + nFull >= mem0.alarmThreshold) || (nUsed + nFull < nUsed) ){
       mem0.nearlyFull = 1;
       sqlite3MallocAlarm(nFull);
+      if( mem0.hardLimit ){
+        nUsed = sqlite3StatusValue(SQLITE_STATUS_MEMORY_USED);
+        if( nUsed >= mem0.hardLimit - nFull ){
+          *pp = 0;
+          return;
+        }
+      }
     }else{
       mem0.nearlyFull = 0;
     }
@@ -28853,7 +28917,7 @@ static void sqlite3TreeViewLine(TreeView *p, const char *zFormat, ...){
     va_start(ap, zFormat);
     sqlite3_str_vappendf(&acc, zFormat, ap);
     va_end(ap);
-    assert( acc.nChar>0 );
+    assert( acc.nChar>0 || acc.accError );
     sqlite3_str_append(&acc, "\n", 1);
   }
   sqlite3StrAccumFinish(&acc);
@@ -75573,7 +75637,7 @@ SQLITE_PRIVATE int sqlite3RealSameAsInt(double r1, sqlite3_int64 i){
   double r2 = (double)i;
   return r1==0.0
       || (memcmp(&r1, &r2, sizeof(r1))==0
-          && (i < 0 ? -i : i) >> 51 == 0);
+          && (i < 0 ? -i : i) >> 53 == 0);
 }
 
 /*
@@ -86995,7 +87059,7 @@ case OP_Affinity: {
       testcase( pIn1->u.i==((sqlite3_int64)1)<<47 );
       testcase( pIn1->u.i==(((sqlite3_int64)1)<<47) - 1 );
       testcase( pIn1->u.i==-((sqlite3_int64)1)<<47);
-      testcase( pIn1->u.i==-(((sqlite3_int64)1)<<47) - 1 );
+      testcase( pIn1->u.i==-(((sqlite3_int64)1)<<47) + 1 );
       if( pIn1->u.i<(((sqlite3_int64)1)<<47) && pIn1->u.i>-(((sqlite3_int64)1)<<47) ){
         pIn1->flags |= MEM_IntReal;
         pIn1->flags &= ~MEM_Int;
@@ -102903,10 +102967,11 @@ static int impliesNotNullRow(Walker *pWalker, Expr *pExpr){
       return WRC_Prune;
 
     case TK_AND:
-      if( sqlite3ExprImpliesNonNullRow(pExpr->pLeft, pWalker->u.iCur)
-       && sqlite3ExprImpliesNonNullRow(pExpr->pRight, pWalker->u.iCur)
-      ){
-        pWalker->eCode = 1;
+      assert( pWalker->eCode==0 );
+      sqlite3WalkExpr(pWalker, pExpr->pLeft);
+      if( pWalker->eCode ){
+        pWalker->eCode = 0;
+        sqlite3WalkExpr(pWalker, pExpr->pRight);
       }
       return WRC_Prune;
 
@@ -102965,15 +103030,8 @@ static int impliesNotNullRow(Walker *pWalker, Expr *pExpr){
 SQLITE_PRIVATE int sqlite3ExprImpliesNonNullRow(Expr *p, int iTab){
   Walker w;
   p = sqlite3ExprSkipCollateAndLikely(p);
-  while( p ){
-    if( p->op==TK_NOTNULL ){
-      p = p->pLeft;
-    }else if( p->op==TK_AND ){
-      if( sqlite3ExprImpliesNonNullRow(p->pLeft, iTab) ) return 1;
-      p = p->pRight;
-    }else{
-      break;
-    }
+  if( p && p->op==TK_NOTNULL ){
+    p = p->pLeft;
   }
   w.xExprCallback = impliesNotNullRow;
   w.xSelectCallback = 0;
@@ -120576,6 +120634,7 @@ struct sqlite3_api_routines {
   int (*value_frombind)(sqlite3_value*);
   /* Version 3.30.0 and later */
   int (*drop_modules)(sqlite3*,const char**);
+  sqlite3_int64 (*hard_heap_limit64)(sqlite3_int64);
 };
 
 /*
@@ -120876,6 +120935,7 @@ typedef int (*sqlite3_loadext_entry)(
 #define sqlite3_value_frombind         sqlite3_api->frombind
 /* Version 3.30.0 and later */
 #define sqlite3_drop_modules           sqlite3_api->drop_modules
+#define sqlite3_hard_heap_limit64      sqlite3_api->hard_heap_limit64
 #endif /* !defined(SQLITE_CORE) && !defined(SQLITE_OMIT_LOAD_EXTENSION) */
 
 #if !defined(SQLITE_CORE) && !defined(SQLITE_OMIT_LOAD_EXTENSION)
@@ -121361,6 +121421,8 @@ static const sqlite3_api_routines sqlite3Apis = {
 #else
   0,
 #endif
+  /* Version 3.31.0 and later */
+  sqlite3_hard_heap_limit64,
 };
 
 /*
@@ -121792,34 +121854,35 @@ SQLITE_PRIVATE void sqlite3AutoLoadExtensions(sqlite3 *db){
 #define PragTyp_FOREIGN_KEY_CHECK             13
 #define PragTyp_FOREIGN_KEY_LIST              14
 #define PragTyp_FUNCTION_LIST                 15
-#define PragTyp_INCREMENTAL_VACUUM            16
-#define PragTyp_INDEX_INFO                    17
-#define PragTyp_INDEX_LIST                    18
-#define PragTyp_INTEGRITY_CHECK               19
-#define PragTyp_JOURNAL_MODE                  20
-#define PragTyp_JOURNAL_SIZE_LIMIT            21
-#define PragTyp_LOCK_PROXY_FILE               22
-#define PragTyp_LOCKING_MODE                  23
-#define PragTyp_PAGE_COUNT                    24
-#define PragTyp_MMAP_SIZE                     25
-#define PragTyp_MODULE_LIST                   26
-#define PragTyp_OPTIMIZE                      27
-#define PragTyp_PAGE_SIZE                     28
-#define PragTyp_PRAGMA_LIST                   29
-#define PragTyp_SECURE_DELETE                 30
-#define PragTyp_SHRINK_MEMORY                 31
-#define PragTyp_SOFT_HEAP_LIMIT               32
-#define PragTyp_SYNCHRONOUS                   33
-#define PragTyp_TABLE_INFO                    34
-#define PragTyp_TEMP_STORE                    35
-#define PragTyp_TEMP_STORE_DIRECTORY          36
-#define PragTyp_THREADS                       37
-#define PragTyp_WAL_AUTOCHECKPOINT            38
-#define PragTyp_WAL_CHECKPOINT                39
-#define PragTyp_ACTIVATE_EXTENSIONS           40
-#define PragTyp_KEY                           41
-#define PragTyp_LOCK_STATUS                   42
-#define PragTyp_STATS                         43
+#define PragTyp_HARD_HEAP_LIMIT               16
+#define PragTyp_INCREMENTAL_VACUUM            17
+#define PragTyp_INDEX_INFO                    18
+#define PragTyp_INDEX_LIST                    19
+#define PragTyp_INTEGRITY_CHECK               20
+#define PragTyp_JOURNAL_MODE                  21
+#define PragTyp_JOURNAL_SIZE_LIMIT            22
+#define PragTyp_LOCK_PROXY_FILE               23
+#define PragTyp_LOCKING_MODE                  24
+#define PragTyp_PAGE_COUNT                    25
+#define PragTyp_MMAP_SIZE                     26
+#define PragTyp_MODULE_LIST                   27
+#define PragTyp_OPTIMIZE                      28
+#define PragTyp_PAGE_SIZE                     29
+#define PragTyp_PRAGMA_LIST                   30
+#define PragTyp_SECURE_DELETE                 31
+#define PragTyp_SHRINK_MEMORY                 32
+#define PragTyp_SOFT_HEAP_LIMIT               33
+#define PragTyp_SYNCHRONOUS                   34
+#define PragTyp_TABLE_INFO                    35
+#define PragTyp_TEMP_STORE                    36
+#define PragTyp_TEMP_STORE_DIRECTORY          37
+#define PragTyp_THREADS                       38
+#define PragTyp_WAL_AUTOCHECKPOINT            39
+#define PragTyp_WAL_CHECKPOINT                40
+#define PragTyp_ACTIVATE_EXTENSIONS           41
+#define PragTyp_KEY                           42
+#define PragTyp_LOCK_STATUS                   43
+#define PragTyp_STATS                         44
 
 /* Property flags associated with various pragma. */
 #define PragFlg_NeedSchema 0x01 /* Force schema load before running */
@@ -122090,6 +122153,11 @@ static const PragmaName aPragmaName[] = {
   /* iArg:      */ 0 },
 #endif
 #endif
+ {/* zName:     */ "hard_heap_limit",
+  /* ePragTyp:  */ PragTyp_HARD_HEAP_LIMIT,
+  /* ePragFlg:  */ PragFlg_Result0,
+  /* ColNames:  */ 0, 0,
+  /* iArg:      */ 0 },
 #if defined(SQLITE_HAS_CODEC)
  {/* zName:     */ "hexkey",
   /* ePragTyp:  */ PragTyp_KEY,
@@ -124491,6 +124559,27 @@ SQLITE_PRIVATE void sqlite3Pragma(
       sqlite3_soft_heap_limit64(N);
     }
     returnSingleInt(v, sqlite3_soft_heap_limit64(-1));
+    break;
+  }
+
+  /*
+  **   PRAGMA hard_heap_limit
+  **   PRAGMA hard_heap_limit = N
+  **
+  ** Invoke sqlite3_hard_heap_limit64() to query or set the hard heap
+  ** limit.  The hard heap limit can be activated or lowered by this
+  ** pragma, but not raised or deactivated.  Only the
+  ** sqlite3_hard_heap_limit64() C-language API can raise or deactivate
+  ** the hard heap limit.  This allows an application to set a heap limit
+  ** constraint that cannot be relaxed by an untrusted SQL script.
+  */
+  case PragTyp_HARD_HEAP_LIMIT: {
+    sqlite3_int64 N;
+    if( zRight && sqlite3DecOrHexToI64(zRight, &N)==SQLITE_OK ){
+      sqlite3_int64 iPrior = sqlite3_hard_heap_limit64(-1);
+      if( N>0 && (iPrior==0 || iPrior>N) ) sqlite3_hard_heap_limit64(N);
+    }
+    returnSingleInt(v, sqlite3_hard_heap_limit64(-1));
     break;
   }
 
@@ -177546,7 +177635,11 @@ static u64 fts3ChecksumIndex(
               pCsr += sqlite3Fts3GetVarint(pCsr, &iCol);
             }else{
               pCsr += sqlite3Fts3GetVarint(pCsr, &iVal);
-              iDocid += iVal;
+              if( p->bDescIdx ){
+                iDocid -= iVal;
+              }else{
+                iDocid += iVal;
+              }
             }
           }else{
             iPos += (iVal - 2);
@@ -177619,10 +177712,9 @@ static int fts3IntegrityCheck(Fts3Table *p, int *pbOk){
       for(iCol=0; rc==SQLITE_OK && iCol<p->nColumn; iCol++){
         if( p->abNotindexed[iCol]==0 ){
           const char *zText = (const char *)sqlite3_column_text(pStmt, iCol+1);
-          int nText = sqlite3_column_bytes(pStmt, iCol+1);
           sqlite3_tokenizer_cursor *pT = 0;
 
-          rc = sqlite3Fts3OpenTokenizer(p->pTokenizer, iLang, zText, nText,&pT);
+          rc = sqlite3Fts3OpenTokenizer(p->pTokenizer, iLang, zText, -1, &pT);
           while( rc==SQLITE_OK ){
             char const *zToken;       /* Buffer containing token */
             int nToken = 0;           /* Number of bytes in token */
@@ -225514,7 +225606,7 @@ SQLITE_API int sqlite3_stmt_init(
 #endif /* !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_STMTVTAB) */
 
 /************** End of stmt.c ************************************************/
-#if __LINE__!=225517
+#if __LINE__!=225609
 #undef SQLITE_SOURCE_ID
 #define SQLITE_SOURCE_ID      "2019-10-10 20:19:45 18db032d058f1436ce3dea84081f4ee5a0f2259ad97301d43c426bc7f3dfalt2"
 #endif
