@@ -25782,6 +25782,7 @@ SQLITE_PRIVATE int sqlite3MutexInit(void){
   GLOBAL(int, mutexIsInit) = 1;
 #endif
 
+  sqlite3MemoryBarrier();
   return rc;
 }
 
@@ -87151,7 +87152,7 @@ case OP_Ge: {             /* same as TK_GE, jump, in1, in3 */
       if( (flags1 | flags3)&MEM_Str ){
         if( (flags1 & (MEM_Int|MEM_IntReal|MEM_Real|MEM_Str))==MEM_Str ){
           applyNumericAffinity(pIn1,0);
-          testcase( flags3!=pIn3->flags );
+          assert( flags3==pIn3->flags );
           flags3 = pIn3->flags;
         }
         if( (flags3 & (MEM_Int|MEM_IntReal|MEM_Real|MEM_Str))==MEM_Str ){
@@ -87174,7 +87175,7 @@ case OP_Ge: {             /* same as TK_GE, jump, in1, in3 */
         sqlite3VdbeMemStringify(pIn1, encoding, 1);
         testcase( (flags1&MEM_Dyn) != (pIn1->flags&MEM_Dyn) );
         flags1 = (pIn1->flags & ~MEM_TypeMask) | (flags1 & MEM_TypeMask);
-        if( pIn1==pIn3 ) flags3 = flags1 | MEM_Str;
+        if( NEVER(pIn1==pIn3) ) flags3 = flags1 | MEM_Str;
       }
       if( (flags3 & MEM_Str)==0 && (flags3&(MEM_Int|MEM_Real|MEM_IntReal))!=0 ){
         testcase( pIn3->flags & MEM_Int );
@@ -121027,6 +121028,10 @@ SQLITE_PRIVATE void sqlite3GenerateConstraintChecks(
         ** updated so there is no point it verifying the check constraint */
         continue;
       }
+      if( bAffinityDone==0 ){
+        sqlite3TableAffinity(v, pTab, regNewData+1);
+        bAffinityDone = 1;
+      }
       allOk = sqlite3VdbeMakeLabel(pParse);
       sqlite3VdbeVerifyAbortable(v, onError);
       sqlite3ExprIfTrue(pParse, pExpr, allOk, SQLITE_JUMPIFNULL);
@@ -121528,12 +121533,14 @@ SQLITE_PRIVATE void sqlite3GenerateConstraintChecks(
             x = *sqlite3VdbeGetOp(v, addrConflictCk);
             if( x.opcode!=OP_IdxRowid ){
               int p2;      /* New P2 value for copied conflict check opcode */
+              const char *zP4;
               if( sqlite3OpcodeProperty[x.opcode]&OPFLG_JUMP ){
                 p2 = lblRecheckOk;
               }else{
                 p2 = x.p2;
               }
-              sqlite3VdbeAddOp4(v, x.opcode, x.p1, p2, x.p3, x.p4.z, x.p4type);
+              zP4 = x.p4type==P4_INT32 ? SQLITE_INT_TO_PTR(x.p4.i) : x.p4.z;
+              sqlite3VdbeAddOp4(v, x.opcode, x.p1, p2, x.p3, zP4, x.p4type);
               sqlite3VdbeChangeP5(v, x.p5);
               VdbeCoverageIf(v, p2!=x.p2);
             }
@@ -159484,7 +159491,10 @@ SQLITE_API int sqlite3_initialize(void){
   ** must be complete.  So isInit must not be set until the very end
   ** of this routine.
   */
-  if( sqlite3GlobalConfig.isInit ) return SQLITE_OK;
+  if( sqlite3GlobalConfig.isInit ){
+    sqlite3MemoryBarrier();
+    return SQLITE_OK;
+  }
 
   /* Make sure the mutex subsystem is initialized.  If unable to 
   ** initialize the mutex subsystem, return early with the error.
@@ -162333,6 +162343,21 @@ SQLITE_PRIVATE int sqlite3ParseUri(
   return rc;
 }
 
+/*
+** This routine does the core work of extracting URI parameters from a
+** database filename for the sqlite3_uri_parameter() interface.
+*/
+static const char *uriParameter(const char *zFilename, const char *zParam){
+  zFilename += sqlite3Strlen30(zFilename) + 1;
+  while( zFilename[0] ){
+    int x = strcmp(zFilename, zParam);
+    zFilename += sqlite3Strlen30(zFilename) + 1;
+    if( x==0 ) return zFilename;
+    zFilename += sqlite3Strlen30(zFilename) + 1;
+  }
+  return 0;
+}
+
 #if defined(SQLITE_HAS_CODEC)
 /*
 ** Process URI filename query parameters relevant to the SQLite Encryption
@@ -162345,7 +162370,9 @@ SQLITE_PRIVATE int sqlite3CodecQueryParameters(
   const char *zUri       /* URI filename */
 ){
   const char *zKey;
-  if( (zKey = sqlite3_uri_parameter(zUri, "hexkey"))!=0 && zKey[0] ){
+  if( zUri==0 ){
+    return 0;
+  }else if( (zKey = uriParameter(zUri, "hexkey"))!=0 && zKey[0] ){
     u8 iByte;
     int i;
     char zDecoded[40];
@@ -162355,10 +162382,10 @@ SQLITE_PRIVATE int sqlite3CodecQueryParameters(
     }
     sqlite3_key_v2(db, zDb, zDecoded, i/2);
     return 1;
-  }else if( (zKey = sqlite3_uri_parameter(zUri, "key"))!=0 ){
+  }else if( (zKey = uriParameter(zUri, "key"))!=0 ){
     sqlite3_key_v2(db, zDb, zKey, sqlite3Strlen30(zKey));
     return 1;
-  }else if( (zKey = sqlite3_uri_parameter(zUri, "textkey"))!=0 ){
+  }else if( (zKey = uriParameter(zUri, "textkey"))!=0 ){
     sqlite3_key_v2(db, zDb, zKey, -1);
     return 1;
   }else{
@@ -163616,14 +163643,7 @@ static const char *databaseName(const char *zName){
 SQLITE_API const char *sqlite3_uri_parameter(const char *zFilename, const char *zParam){
   if( zFilename==0 || zParam==0 ) return 0;
   zFilename = databaseName(zFilename);
-  zFilename += sqlite3Strlen30(zFilename) + 1;
-  while( zFilename[0] ){
-    int x = strcmp(zFilename, zParam);
-    zFilename += sqlite3Strlen30(zFilename) + 1;
-    if( x==0 ) return zFilename;
-    zFilename += sqlite3Strlen30(zFilename) + 1;
-  }
-  return 0;
+  return uriParameter(zFilename, zParam);
 }
 
 /*
@@ -175277,7 +175297,7 @@ static int fts3tokFilterMethod(
     if( pCsr->zInput==0 ){
       rc = SQLITE_NOMEM;
     }else{
-      memcpy(pCsr->zInput, zByte, nByte);
+      if( nByte>0 ) memcpy(pCsr->zInput, zByte, nByte);
       pCsr->zInput[nByte] = 0;
       rc = pTab->pMod->xOpen(pTab->pTok, pCsr->zInput, nByte, &pCsr->pCsr);
       if( rc==SQLITE_OK ){
@@ -177887,7 +177907,7 @@ static int fts3SegmentIsMaxLevel(Fts3Table *p, i64 iAbsLevel, int *pbMax){
   if( rc!=SQLITE_OK ) return rc;
   sqlite3_bind_int64(pStmt, 1, iAbsLevel+1);
   sqlite3_bind_int64(pStmt, 2, 
-      ((iAbsLevel/FTS3_SEGDIR_MAXLEVEL)+1) * FTS3_SEGDIR_MAXLEVEL
+      (((u64)iAbsLevel/FTS3_SEGDIR_MAXLEVEL)+1) * FTS3_SEGDIR_MAXLEVEL
   );
 
   *pbMax = 0;
@@ -228895,7 +228915,7 @@ SQLITE_API int sqlite3_stmt_init(
 #endif /* !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_STMTVTAB) */
 
 /************** End of stmt.c ************************************************/
-#if __LINE__!=228898
+#if __LINE__!=228918
 #undef SQLITE_SOURCE_ID
 #define SQLITE_SOURCE_ID      "2020-01-27 19:55:54 3bfa9cc97da10598521b342961df8f5f68c7388fa117345eeb516eaa837balt2"
 #endif
