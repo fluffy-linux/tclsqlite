@@ -5246,7 +5246,7 @@ typedef struct sqlite3_context sqlite3_context;
 ** [sqlite3_bind_parameter_index()] API if desired.  ^The index
 ** for "?NNN" parameters is the value of NNN.
 ** ^The NNN value must be between 1 and the [sqlite3_limit()]
-** parameter [SQLITE_LIMIT_VARIABLE_NUMBER] (default value: 999).
+** parameter [SQLITE_LIMIT_VARIABLE_NUMBER] (default value: 32766).
 **
 ** ^The third argument is the value to bind to the parameter.
 ** ^If the third parameter to sqlite3_bind_text() or sqlite3_bind_text16()
@@ -13291,9 +13291,12 @@ struct fts5_api {
 
 /*
 ** The maximum value of a ?nnn wildcard that the parser will accept.
+** If the value exceeds 32767 then extra space is required for the Expr
+** structure.  But otherwise, we believe that the number can be as large
+** as a signed 32-bit integer can hold.
 */
 #ifndef SQLITE_MAX_VARIABLE_NUMBER
-# define SQLITE_MAX_VARIABLE_NUMBER 999
+# define SQLITE_MAX_VARIABLE_NUMBER 32766
 #endif
 
 /* Maximum page size.  The upper bound on this value is 65536.  This a limit
@@ -17460,8 +17463,11 @@ struct Table {
 */
 #ifndef SQLITE_OMIT_VIRTUALTABLE
 #  define IsVirtual(X)      ((X)->nModuleArg)
+#  define ExprIsVtab(X)  \
+              ((X)->op==TK_COLUMN && (X)->y.pTab!=0 && (X)->y.pTab->nModuleArg)
 #else
 #  define IsVirtual(X)      0
+#  define ExprIsVtab(X)     0
 #endif
 
 /*
@@ -17819,10 +17825,10 @@ struct AggInfo {
 ** it uses less memory in the Expr object, which is a big memory user
 ** in systems with lots of prepared statements.  And few applications
 ** need more than about 10 or 20 variables.  But some extreme users want
-** to have prepared statements with over 32767 variables, and for them
+** to have prepared statements with over 32766 variables, and for them
 ** the option is available (at compile-time).
 */
-#if SQLITE_MAX_VARIABLE_NUMBER<=32767
+#if SQLITE_MAX_VARIABLE_NUMBER<32767
 typedef i16 ynVar;
 #else
 typedef int ynVar;
@@ -19162,13 +19168,16 @@ SQLITE_PRIVATE int sqlite3CantopenError(int);
 #ifdef SQLITE_DEBUG
 SQLITE_PRIVATE   int sqlite3NomemError(int);
 SQLITE_PRIVATE   int sqlite3IoerrnomemError(int);
-SQLITE_PRIVATE   int sqlite3CorruptPgnoError(int,Pgno);
 # define SQLITE_NOMEM_BKPT sqlite3NomemError(__LINE__)
 # define SQLITE_IOERR_NOMEM_BKPT sqlite3IoerrnomemError(__LINE__)
-# define SQLITE_CORRUPT_PGNO(P) sqlite3CorruptPgnoError(__LINE__,(P))
 #else
 # define SQLITE_NOMEM_BKPT SQLITE_NOMEM
 # define SQLITE_IOERR_NOMEM_BKPT SQLITE_IOERR_NOMEM
+#endif
+#if defined(SQLITE_DEBUG) || defined(SQLITE_ENABLE_CORRUPT_PGNO)
+SQLITE_PRIVATE   int sqlite3CorruptPgnoError(int,Pgno);
+# define SQLITE_CORRUPT_PGNO(P) sqlite3CorruptPgnoError(__LINE__,(P))
+#else
 # define SQLITE_CORRUPT_PGNO(P) sqlite3CorruptError(__LINE__)
 #endif
 
@@ -19248,6 +19257,7 @@ SQLITE_PRIVATE void *sqlite3DbReallocOrFree(sqlite3 *, void *, size_t);
 SQLITE_PRIVATE void *sqlite3DbRealloc(sqlite3 *, void *, size_t);
 SQLITE_PRIVATE void sqlite3DbFree(sqlite3*, void*);
 SQLITE_PRIVATE void sqlite3DbFreeNN(sqlite3*, void*);
+SQLITE_PRIVATE void sqlite3FreeFilename(char*);
 SQLITE_PRIVATE size_t sqlite3MallocSize(void*);
 SQLITE_PRIVATE size_t sqlite3DbMallocSize(sqlite3*, void*);
 SQLITE_PRIVATE void *sqlite3PageMalloc(size_t);
@@ -19441,11 +19451,7 @@ SQLITE_PRIVATE void sqlite3AddGenerated(Parse*,Expr*,Token*);
 SQLITE_PRIVATE void sqlite3EndTable(Parse*,Token*,Token*,u8,Select*);
 SQLITE_PRIVATE int sqlite3ParseUri(const char*,const char*,unsigned int*,
                     sqlite3_vfs**,char**,char **);
-#ifdef SQLITE_HAS_CODEC
-SQLITE_PRIVATE   int sqlite3CodecQueryParameters(sqlite3*,const char*,const char*);
-#else
-# define sqlite3CodecQueryParameters(A,B,C) 0
-#endif
+#define sqlite3CodecQueryParameters(A,B,C) 0
 SQLITE_PRIVATE Btree *sqlite3DbNameToBtree(sqlite3*,const char*);
 
 #ifdef SQLITE_UNTESTABLE
@@ -19757,6 +19763,8 @@ SQLITE_PRIVATE int sqlite3VarintLen(u64 v);
 */
 #define getVarint32(A,B)  \
   (u8)((*(A)<(u8)0x80)?((B)=(u32)*(A)),1:sqlite3GetVarint32((A),(u32 *)&(B)))
+#define getVarint32NR(A,B) \
+  B=(u32)*(A);if(B>=0x80)sqlite3GetVarint32((A),(u32*)&(B))
 #define putVarint32(A,B)  \
   (u8)(((u32)(B)<(u32)0x80)?(*(A)=(unsigned char)(B)),1:\
   sqlite3PutVarint((A),(B)))
@@ -30631,26 +30639,6 @@ static const unsigned char sqlite3Utf8Trans1[] = {
   }                                                                 \
 }
 
-#define READ_UTF16LE(zIn, TERM, c){                                   \
-  c = (*zIn++);                                                       \
-  c += ((*zIn++)<<8);                                                 \
-  if( c>=0xD800 && c<0xE000 && TERM ){                                \
-    int c2 = (*zIn++);                                                \
-    c2 += ((*zIn++)<<8);                                              \
-    c = (c2&0x03FF) + ((c&0x003F)<<10) + (((c&0x03C0)+0x0040)<<10);   \
-  }                                                                   \
-}
-
-#define READ_UTF16BE(zIn, TERM, c){                                   \
-  c = ((*zIn++)<<8);                                                  \
-  c += (*zIn++);                                                      \
-  if( c>=0xD800 && c<0xE000 && TERM ){                                \
-    int c2 = ((*zIn++)<<8);                                           \
-    c2 += (*zIn++);                                                   \
-    c = (c2&0x03FF) + ((c&0x003F)<<10) + (((c&0x03C0)+0x0040)<<10);   \
-  }                                                                   \
-}
-
 /*
 ** Translate a single UTF-8 character.  Return the unicode value.
 **
@@ -30827,13 +30815,43 @@ SQLITE_PRIVATE SQLITE_NOINLINE int sqlite3VdbeMemTranslate(Mem *pMem, u8 desired
     if( pMem->enc==SQLITE_UTF16LE ){
       /* UTF-16 Little-endian -> UTF-8 */
       while( zIn<zTerm ){
-        READ_UTF16LE(zIn, zIn<zTerm, c); 
+        c = *(zIn++);
+        c += (*(zIn++))<<8;
+        if( c>=0xd800 && c<0xe000 ){
+          if( c>=0xdc00 || zIn>=zTerm ){
+            c = 0xfffd;
+          }else{
+            int c2 = *(zIn++);
+            c2 += (*(zIn++))<<8;
+            if( c2<0xdc00 || c2>=0xe000 ){
+              zIn -= 2;
+              c = 0xfffd;
+            }else{
+              c = ((c&0x3ff)<<10) + (c2&0x3ff) + 0x10000;
+            }
+          }
+        }
         WRITE_UTF8(z, c);
       }
     }else{
       /* UTF-16 Big-endian -> UTF-8 */
       while( zIn<zTerm ){
-        READ_UTF16BE(zIn, zIn<zTerm, c); 
+        c = (*(zIn++))<<8;
+        c += *(zIn++);
+        if( c>=0xd800 && c<0xe000 ){
+          if( c>=0xdc00 || zIn>=zTerm ){
+            c = 0xfffd;
+          }else{
+            int c2 = (*(zIn++))<<8;
+            c2 += *(zIn++);
+            if( c2<0xdc00 || c2>=0xe000 ){
+              zIn -= 2;
+              c = 0xfffd;
+            }else{
+              c = ((c&0x3ff)<<10) + (c2&0x3ff) + 0x10000;
+            }
+          }
+        }
         WRITE_UTF8(z, c);
       }
     }
@@ -30992,18 +31010,15 @@ SQLITE_PRIVATE int sqlite3Utf16ByteLen(const void *zIn, int nChar){
   unsigned char const *z = zIn;
   int n = 0;
   
-  if( SQLITE_UTF16NATIVE==SQLITE_UTF16BE ){
-    while( n<nChar ){
-      READ_UTF16BE(z, 1, c);
-      n++;
-    }
-  }else{
-    while( n<nChar ){
-      READ_UTF16LE(z, 1, c);
-      n++;
-    }
+  if( SQLITE_UTF16NATIVE==SQLITE_UTF16LE ) z++;
+  while( n<nChar ){
+    c = z[0];
+    z += 2;
+    if( c>=0xd8 && c<0xdc && z[0]>=0xdc && z[0]<0xe0 ) z += 2;
+    n++;
   }
-  return (int)(z-(unsigned char const *)zIn);
+  return (int)(z-(unsigned char const *)zIn) 
+              - (SQLITE_UTF16NATIVE==SQLITE_UTF16LE);
 }
 
 #if defined(SQLITE_TEST)
@@ -31031,30 +31046,6 @@ SQLITE_PRIVATE void sqlite3UtfSelfTest(void){
     if( i>=0xD800 && i<=0xDFFF ) t = 0xFFFD;
     if( (i&0xFFFFFFFE)==0xFFFE ) t = 0xFFFD;
     assert( c==t );
-    assert( (z-zBuf)==n );
-  }
-  for(i=0; i<0x00110000; i++){
-    if( i>=0xD800 && i<0xE000 ) continue;
-    z = zBuf;
-    WRITE_UTF16LE(z, i);
-    n = (int)(z-zBuf);
-    assert( n>0 && n<=4 );
-    z[0] = 0;
-    z = zBuf;
-    READ_UTF16LE(z, 1, c);
-    assert( c==i );
-    assert( (z-zBuf)==n );
-  }
-  for(i=0; i<0x00110000; i++){
-    if( i>=0xD800 && i<0xE000 ) continue;
-    z = zBuf;
-    WRITE_UTF16BE(z, i);
-    n = (int)(z-zBuf);
-    assert( n>0 && n<=4 );
-    z[0] = 0;
-    z = zBuf;
-    READ_UTF16BE(z, 1, c);
-    assert( c==i );
     assert( (z-zBuf)==n );
   }
 }
@@ -108613,7 +108604,6 @@ static void attachFunc(
     rc = SQLITE_NOMEM_BKPT;
   }
 
-
 #ifdef SQLITE_HAS_CODEC
   if( rc==SQLITE_OK ){
     extern int sqlite3CodecAttach(sqlite3*, int, const void*, int);
@@ -108648,7 +108638,7 @@ static void attachFunc(
     }
   }
 #endif
-  sqlite3_free( zPath );
+  sqlite3FreeFilename( zPath );
 
   /* If the file was opened successfully, read the schema for the new database.
   ** If this fails, or if opening the file failed, then close the file and 
@@ -147842,8 +147832,11 @@ static i8 wherePathSatisfiesOrderBy(
         if( j>=pLoop->nLTerm ) continue;
       }
       if( (pTerm->eOperator&(WO_EQ|WO_IS))!=0 && pOBExpr->iColumn>=0 ){
-        if( sqlite3ExprCollSeqMatch(pWInfo->pParse, 
-                  pOrderBy->a[i].pExpr, pTerm->pExpr)==0 ){
+        Parse *pParse = pWInfo->pParse;
+        CollSeq *pColl1 = sqlite3ExprNNCollSeq(pParse, pOrderBy->a[i].pExpr);
+        CollSeq *pColl2 = sqlite3ExprCompareCollSeq(pParse, pTerm->pExpr);
+        assert( pColl1 );
+        if( pColl2==0 || sqlite3StrICmp(pColl1->zName, pColl2->zName) ){
           continue;
         }
         testcase( pTerm->pExpr->op==TK_IS );
@@ -162104,9 +162097,11 @@ SQLITE_API int sqlite3_limit(sqlite3 *db, int limitId, int newLimit){
 **
 ** If successful, SQLITE_OK is returned. In this case *ppVfs is set to point to
 ** the VFS that should be used to open the database file. *pzFile is set to
-** point to a buffer containing the name of the file to open. It is the 
-** responsibility of the caller to eventually call sqlite3_free() to release
-** this buffer.
+** point to a buffer containing the name of the file to open.  The value
+** stored in *pzFile is a database name acceptable to sqlite3_uri_parameter()
+** and is in the same format as names created using sqlite3_create_filename().
+** The caller must invoke sqlite3FreeFilename() (not sqlite3_free()!) on
+** the value returned in *pzFile to avoid a memory leak.
 **
 ** If an error occurs, then an SQLite error code is returned and *pzErrMsg
 ** may be set to point to a buffer containing an English language error 
@@ -162138,7 +162133,7 @@ SQLITE_PRIVATE int sqlite3ParseUri(
     int eState;                   /* Parser state when parsing URI */
     int iIn;                      /* Input character index */
     int iOut = 0;                 /* Output character index */
-    size_t nByte = nUri+2;        /* Bytes of space to allocate */
+    size_t nByte = nUri+8;        /* Bytes of space to allocate */
 
     /* Make sure the SQLITE_OPEN_URI flag is set to indicate to the VFS xOpen 
     ** method that there may be extra parameters following the file-name.  */
@@ -162147,6 +162142,9 @@ SQLITE_PRIVATE int sqlite3ParseUri(
     for(iIn=0; iIn<nUri; iIn++) nByte += (zUri[iIn]=='&');
     zFile = sqlite3Malloc(nByte);
     if( !zFile ) return SQLITE_NOMEM_BKPT;
+
+    memset(zFile, 0, 4);  /* 4-byte of 0x00 is the start of DB name marker */
+    zFile += 4;
 
     iIn = 5;
 #ifdef SQLITE_ALLOW_URI_AUTHORITY
@@ -162237,8 +162235,7 @@ SQLITE_PRIVATE int sqlite3ParseUri(
       zFile[iOut++] = c;
     }
     if( eState==1 ) zFile[iOut++] = '\0';
-    zFile[iOut++] = '\0';
-    zFile[iOut++] = '\0';
+    memset(zFile+iOut, 0, 4); /* end-of-options + empty journal filenames */
 
     /* Check if there were any options specified that should be interpreted 
     ** here. Options that are interpreted here include "vfs" and those that
@@ -162318,13 +162315,14 @@ SQLITE_PRIVATE int sqlite3ParseUri(
     }
 
   }else{
-    zFile = sqlite3Malloc(nUri+2);
+    zFile = sqlite3Malloc(nUri+8);
     if( !zFile ) return SQLITE_NOMEM_BKPT;
+    memset(zFile, 0, 4);
+    zFile += 4;
     if( nUri ){
       memcpy(zFile, zUri, nUri);
     }
-    zFile[nUri] = '\0';
-    zFile[nUri+1] = '\0';
+    memset(zFile+nUri, 0, 4);
     flags &= ~SQLITE_OPEN_URI;
   }
 
@@ -162335,7 +162333,7 @@ SQLITE_PRIVATE int sqlite3ParseUri(
   }
  parse_uri_out:
   if( rc!=SQLITE_OK ){
-    sqlite3_free(zFile);
+    sqlite3FreeFilename(zFile);
     zFile = 0;
   }
   *pFlags = flags;
@@ -162777,7 +162775,7 @@ opendb_out:
 #if defined(SQLITE_HAS_CODEC)
   if( rc==SQLITE_OK ) sqlite3CodecQueryParameters(db, 0, zOpen);
 #endif
-  sqlite3_free(zOpen);
+  sqlite3FreeFilename(zOpen);
   return rc & 0xff;
 }
 
@@ -163644,6 +163642,14 @@ SQLITE_API const char *sqlite3_uri_parameter(const char *zFilename, const char *
   if( zFilename==0 || zParam==0 ) return 0;
   zFilename = databaseName(zFilename);
   return uriParameter(zFilename, zParam);
+}
+
+/*
+** Free memory obtained from sqlite3ParseUri().
+*/
+SQLITE_PRIVATE void sqlite3FreeFilename(char *p){
+  if( p==0 ) return;
+  sqlite3_free(p - 4);
 }
 
 /*
@@ -228915,7 +228921,7 @@ SQLITE_API int sqlite3_stmt_init(
 #endif /* !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_STMTVTAB) */
 
 /************** End of stmt.c ************************************************/
-#if __LINE__!=228918
+#if __LINE__!=228924
 #undef SQLITE_SOURCE_ID
 #define SQLITE_SOURCE_ID      "2020-01-27 19:55:54 3bfa9cc97da10598521b342961df8f5f68c7388fa117345eeb516eaa837balt2"
 #endif
