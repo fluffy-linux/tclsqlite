@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.35.0.  By combining all the individual C code files into this
+** version 3.35.2.  By combining all the individual C code files into this
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -1187,9 +1187,9 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.35.0"
-#define SQLITE_VERSION_NUMBER 3035000
-#define SQLITE_SOURCE_ID      "2021-03-12 15:10:09 acd63062eb06748bfe9e4886639e4f2b54ea6a496a83f10716abbaba4115500b"
+#define SQLITE_VERSION        "3.35.2"
+#define SQLITE_VERSION_NUMBER 3035002
+#define SQLITE_SOURCE_ID      "2021-03-17 19:07:21 ea80f3002f4120f5dcee76e8779dfdc88e1e096c5cdd06904c20fd26d50c3827"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -17041,7 +17041,10 @@ struct sqlite3 {
     unsigned orphanTrigger : 1; /* Last statement is orphaned TEMP trigger */
     unsigned imposterTable : 1; /* Building an imposter table */
     unsigned reopenMemdb : 1;   /* ATTACH is really a reopen using MemDB */
+    unsigned bDropColumn : 1;   /* Doing schema check after DROP COLUMN */
     char **azInit;              /* "type", "name", and "tbl_name" columns */
+                                /*   or if bDropColumn, then azInit[0] is the */
+                                /*   name of the column being dropped */
   } init;
   int nVdbeActive;              /* Number of VDBEs currently running */
   int nVdbeRead;                /* Number of active VDBEs that read or write */
@@ -22933,6 +22936,7 @@ static int isDate(
   int eType;
   memset(p, 0, sizeof(*p));
   if( argc==0 ){
+    if( !sqlite3NotPureFunc(context) ) return 1;
     return setDateTimeToCurrent(context, p);
   }
   if( (eType = sqlite3_value_type(argv[0]))==SQLITE_FLOAT
@@ -99395,6 +99399,7 @@ static int lookupName(
     assert( pExpr->op==TK_ID );
     if( ExprHasProperty(pExpr,EP_DblQuoted)
      && areDoubleQuotedStringsEnabled(db, pTopNC)
+     && (db->init.bDropColumn==0 || sqlite3StrICmp(zCol, db->init.azInit[0])!=0)
     ){
       /* If a double-quoted identifier does not match any known column name,
       ** then treat it as a string.
@@ -99409,6 +99414,11 @@ static int lookupName(
       ** Someday, I hope to get rid of this hack. Unfortunately there is
       ** a huge amount of legacy SQL that uses it. So for now, we just
       ** issue a warning.
+      **
+      ** 2021-03-15: ticket 1c24a659e6d7f3a1
+      ** Do not do the ID-to-STRING conversion when doing the schema
+      ** sanity check following a DROP COLUMN if the identifer name matches
+      ** the name of the column being dropped.
       */
       sqlite3_log(SQLITE_WARNING,
         "double-quoted string literal: \"%w\"", zCol);
@@ -107001,7 +107011,8 @@ static void renameTestSchema(
   Parse *pParse,                  /* Parse context */
   const char *zDb,                /* Name of db to verify schema of */
   int bTemp,                      /* True if this is the temp db */
-  const char *zWhen               /* "when" part of error message */
+  const char *zWhen,              /* "when" part of error message */
+  const char *zDropColumn         /* Name of column being dropped */
 ){
   pParse->colNamesSet = 1;
   sqlite3NestedParse(pParse,
@@ -107009,9 +107020,9 @@ static void renameTestSchema(
       "FROM \"%w\"." DFLT_SCHEMA_TABLE " "
       "WHERE name NOT LIKE 'sqliteX_%%' ESCAPE 'X'"
       " AND sql NOT LIKE 'create virtual%%'"
-      " AND sqlite_rename_test(%Q, sql, type, name, %d, %Q)=NULL ",
+      " AND sqlite_rename_test(%Q, sql, type, name, %d, %Q, %Q)=NULL ",
       zDb,
-      zDb, bTemp, zWhen
+      zDb, bTemp, zWhen, zDropColumn
   );
 
   if( bTemp==0 ){
@@ -107020,8 +107031,8 @@ static void renameTestSchema(
         "FROM temp." DFLT_SCHEMA_TABLE " "
         "WHERE name NOT LIKE 'sqliteX_%%' ESCAPE 'X'"
         " AND sql NOT LIKE 'create virtual%%'"
-        " AND sqlite_rename_test(%Q, sql, type, name, 1, %Q)=NULL ",
-        zDb, zWhen
+        " AND sqlite_rename_test(%Q, sql, type, name, 1, %Q, %Q)=NULL ",
+        zDb, zWhen, zDropColumn
     );
   }
 }
@@ -107184,7 +107195,7 @@ SQLITE_PRIVATE void sqlite3AlterRenameTable(
             "sql = sqlite_rename_table(%Q, type, name, sql, %Q, %Q, 1), "
             "tbl_name = "
               "CASE WHEN tbl_name=%Q COLLATE nocase AND "
-              "    sqlite_rename_test(%Q, sql, type, name, 1, 'after rename') "
+              "  sqlite_rename_test(%Q, sql, type, name, 1, 'after rename',0) "
               "THEN %Q ELSE tbl_name END "
             "WHERE type IN ('view', 'trigger')"
         , zDb, zTabName, zName, zTabName, zDb, zName);
@@ -107204,7 +107215,7 @@ SQLITE_PRIVATE void sqlite3AlterRenameTable(
 #endif
 
   renameReloadSchema(pParse, iDb, INITFLAG_AlterRename);
-  renameTestSchema(pParse, zDb, iDb==1, "after rename");
+  renameTestSchema(pParse, zDb, iDb==1, "after rename", 0);
 
 exit_rename_table:
   sqlite3SrcListDelete(db, pSrc);
@@ -107572,7 +107583,7 @@ SQLITE_PRIVATE void sqlite3AlterRenameColumn(
 
   /* Drop and reload the database schema. */
   renameReloadSchema(pParse, iSchema, INITFLAG_AlterRename);
-  renameTestSchema(pParse, zDb, iSchema==1, "after rename");
+  renameTestSchema(pParse, zDb, iSchema==1, "after rename", 0);
 
  exit_rename_column:
   sqlite3SrcListDelete(db, pSrc);
@@ -107979,12 +107990,17 @@ static int renameParseSql(
   const char *zDb,                /* Name of schema SQL belongs to */
   sqlite3 *db,                    /* Database handle */
   const char *zSql,               /* SQL to parse */
-  int bTemp                       /* True if SQL is from temp schema */
+  int bTemp,                      /* True if SQL is from temp schema */
+  const char *zDropColumn         /* Name of column being dropped */
 ){
   int rc;
   char *zErr = 0;
 
   db->init.iDb = bTemp ? 1 : sqlite3FindDbName(db, zDb);
+  if( zDropColumn ){
+    db->init.bDropColumn = 1;
+    db->init.azInit = (char**)&zDropColumn;
+  }
 
   /* Parse the SQL statement passed as the first argument. If no error
   ** occurs and the parse does not result in a new table, index or
@@ -108017,6 +108033,7 @@ static int renameParseSql(
 #endif
 
   db->init.iDb = 0;
+  db->init.bDropColumn = 0;
   return rc;
 }
 
@@ -108318,7 +108335,7 @@ static void renameColumnFunc(
 #ifndef SQLITE_OMIT_AUTHORIZATION
   db->xAuth = 0;
 #endif
-  rc = renameParseSql(&sParse, zDb, db, zSql, bTemp);
+  rc = renameParseSql(&sParse, zDb, db, zSql, bTemp, 0);
 
   /* Find tokens that need to be replaced. */
   memset(&sWalker, 0, sizeof(Walker));
@@ -108360,12 +108377,12 @@ static void renameColumnFunc(
         for(pIdx=sParse.pNewIndex; pIdx; pIdx=pIdx->pNext){
           sqlite3WalkExprList(&sWalker, pIdx->aColExpr);
         }
-      }
 #ifndef SQLITE_OMIT_GENERATED_COLUMNS
-      for(i=0; i<sParse.pNewTable->nCol; i++){
-        sqlite3WalkExpr(&sWalker, sParse.pNewTable->aCol[i].pDflt);
-      }
+        for(i=0; i<sParse.pNewTable->nCol; i++){
+          sqlite3WalkExpr(&sWalker, sParse.pNewTable->aCol[i].pDflt);
+        }
 #endif
+      }
 
       for(pFKey=sParse.pNewTable->pFKey; pFKey; pFKey=pFKey->pNextFrom){
         for(i=0; i<pFKey->nCol; i++){
@@ -108522,7 +108539,7 @@ static void renameTableFunc(
     sWalker.xSelectCallback = renameTableSelectCb;
     sWalker.u.pRename = &sCtx;
 
-    rc = renameParseSql(&sParse, zDb, db, zInput, bTemp);
+    rc = renameParseSql(&sParse, zDb, db, zInput, bTemp, 0);
 
     if( rc==SQLITE_OK ){
       int isLegacy = (db->flags & SQLITE_LegacyAlter);
@@ -108638,6 +108655,7 @@ static void renameTableFunc(
 **   3: Object name.
 **   4: True if object is from temp schema.
 **   5: "when" part of error message.
+**   6: Name of column being dropped, or NULL.
 **
 ** Unless it finds an error, this function normally returns NULL. However, it
 ** returns integer value 1 if:
@@ -108656,6 +108674,7 @@ static void renameTableTest(
   int bTemp = sqlite3_value_int(argv[4]);
   int isLegacy = (db->flags & SQLITE_LegacyAlter);
   char const *zWhen = (const char*)sqlite3_value_text(argv[5]);
+  char const *zDropColumn = (const char*)sqlite3_value_text(argv[6]);
 
 #ifndef SQLITE_OMIT_AUTHORIZATION
   sqlite3_xauth xAuth = db->xAuth;
@@ -108666,7 +108685,7 @@ static void renameTableTest(
   if( zDb && zInput ){
     int rc;
     Parse sParse;
-    rc = renameParseSql(&sParse, zDb, db, zInput, bTemp);
+    rc = renameParseSql(&sParse, zDb, db, zInput, bTemp, zDropColumn);
     if( rc==SQLITE_OK ){
       if( isLegacy==0 && sParse.pNewTable && sParse.pNewTable->pSelect ){
         NameContext sNC;
@@ -108734,7 +108753,7 @@ static void dropColumnFunc(
 #endif
 
   UNUSED_PARAMETER(NotUsed);
-  rc = renameParseSql(&sParse, zDb, db, zSql, iSchema==1);
+  rc = renameParseSql(&sParse, zDb, db, zSql, iSchema==1, 0);
   if( rc!=SQLITE_OK ) goto drop_column_done;
   pTab = sParse.pNewTable;
   if( pTab==0 || pTab->nCol==1 || iCol>=pTab->nCol ){
@@ -108827,7 +108846,7 @@ SQLITE_PRIVATE void sqlite3AlterDropColumn(Parse *pParse, SrcList *pSrc, Token *
   iDb = sqlite3SchemaToIndex(db, pTab->pSchema);
   assert( iDb>=0 );
   zDb = db->aDb[iDb].zDbSName;
-  renameTestSchema(pParse, zDb, iDb==1, "");
+  renameTestSchema(pParse, zDb, iDb==1, "", 0);
   sqlite3NestedParse(pParse,
       "UPDATE \"%w\"." DFLT_SCHEMA_TABLE " SET "
       "sql = sqlite_drop_column(%d, sql, %d) "
@@ -108837,7 +108856,7 @@ SQLITE_PRIVATE void sqlite3AlterDropColumn(Parse *pParse, SrcList *pSrc, Token *
 
   /* Drop and reload the database schema. */
   renameReloadSchema(pParse, iDb, INITFLAG_AlterDrop);
-  renameTestSchema(pParse, zDb, iDb==1, "after drop column");
+  renameTestSchema(pParse, zDb, iDb==1, "after drop column", zCol);
 
   /* Edit rows of table on disk */
   if( pParse->nErr==0 && (pTab->aCol[iCol].colFlags & COLFLAG_VIRTUAL)==0 ){
@@ -108897,7 +108916,7 @@ SQLITE_PRIVATE void sqlite3AlterFunctions(void){
   static FuncDef aAlterTableFuncs[] = {
     INTERNAL_FUNCTION(sqlite_rename_column,  9, renameColumnFunc),
     INTERNAL_FUNCTION(sqlite_rename_table,   7, renameTableFunc),
-    INTERNAL_FUNCTION(sqlite_rename_test,    6, renameTableTest),
+    INTERNAL_FUNCTION(sqlite_rename_test,    7, renameTableTest),
     INTERNAL_FUNCTION(sqlite_drop_column,    3, dropColumnFunc),
   };
   sqlite3InsertBuiltinFuncs(aAlterTableFuncs, ArraySize(aAlterTableFuncs));
@@ -135351,6 +135370,7 @@ static int flattenSubquery(
     if( (p->selFlags & SF_Recursive) ) return 0;
 
     if( pSrc->nSrc>1 ){
+      if( pParse->nSelect>500 ) return 0;
       aCsrMap = sqlite3DbMallocZero(db, pParse->nTab*sizeof(int));
     }
   }
@@ -135427,6 +135447,7 @@ static int flattenSubquery(
     if( pNew==0 ){
       p->pPrior = pPrior;
     }else{
+      pNew->selId = ++pParse->nSelect;
       if( aCsrMap && db->mallocFailed==0 ){
         renumberCursors(pParse, pNew, iFrom, aCsrMap);
       }
@@ -229525,7 +229546,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2021-03-12 15:10:09 acd63062eb06748bfe9e4886639e4f2b54ea6a496a83f10716abbaba4115500b", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2021-03-17 19:07:21 ea80f3002f4120f5dcee76e8779dfdc88e1e096c5cdd06904c20fd26d50c3827", -1, SQLITE_TRANSIENT);
 }
 
 /*
@@ -234571,9 +234592,9 @@ SQLITE_API int sqlite3_stmt_init(
 #endif /* !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_STMTVTAB) */
 
 /************** End of stmt.c ************************************************/
-#if __LINE__!=234570
+#if __LINE__!=234595
 #undef SQLITE_SOURCE_ID
-#define SQLITE_SOURCE_ID      "2021-03-12 15:10:09 acd63062eb06748bfe9e4886639e4f2b54ea6a496a83f10716abbaba4115alt2"
+#define SQLITE_SOURCE_ID      "2021-03-17 19:07:21 ea80f3002f4120f5dcee76e8779dfdc88e1e096c5cdd06904c20fd26d50calt2"
 #endif
 /* Return the source-id for this library */
 SQLITE_API const char *sqlite3_sourceid(void){ return SQLITE_SOURCE_ID; }
