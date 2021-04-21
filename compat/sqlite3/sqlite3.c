@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.35.4.  By combining all the individual C code files into this
+** version 3.35.5.  By combining all the individual C code files into this
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -1187,9 +1187,9 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.35.4"
-#define SQLITE_VERSION_NUMBER 3035004
-#define SQLITE_SOURCE_ID      "2021-04-02 15:20:15 5d4c65779dab868b285519b19e4cf9d451d50c6048f06f653aa701ec212df45e"
+#define SQLITE_VERSION        "3.35.5"
+#define SQLITE_VERSION_NUMBER 3035005
+#define SQLITE_SOURCE_ID      "2021-04-19 18:32:05 1b256d97b553a9611efca188a3d995a2fff712759044ba480f9a0c9e98fae886"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -2192,6 +2192,19 @@ struct sqlite3_io_methods {
 ** file to the database file, but before the *-shm file is updated to
 ** record the fact that the pages have been checkpointed.
 ** </ul>
+**
+** <li>[[SQLITE_FCNTL_EXTERNAL_READER]]
+** The EXPERIMENTAL [SQLITE_FCNTL_EXTERNAL_READER] opcode is used to detect
+** whether or not there is a database client in another process with a wal-mode
+** transaction open on the database or not. It is only available on unix.The
+** (void*) argument passed with this file-control should be a pointer to a
+** value of type (int). The integer value is set to 1 if the database is a wal
+** mode database and there exists at least one client in another process that
+** currently has an SQL transaction open on the database. It is set to 0 if
+** the database is not a wal-mode db, or if there is no such connection in any
+** other process. This opcode cannot be used to detect transactions opened
+** by clients within the current process, only within other processes.
+** </ul>
 */
 #define SQLITE_FCNTL_LOCKSTATE               1
 #define SQLITE_FCNTL_GET_LOCKPROXYFILE       2
@@ -2231,6 +2244,8 @@ struct sqlite3_io_methods {
 #define SQLITE_FCNTL_CKPT_DONE              37
 #define SQLITE_FCNTL_RESERVE_BYTES          38
 #define SQLITE_FCNTL_CKPT_START             39
+
+#define SQLITE_FCNTL_EXTERNAL_READER        40
 
 /* deprecated names */
 #define SQLITE_GET_LOCKPROXYFILE      SQLITE_FCNTL_GET_LOCKPROXYFILE
@@ -37907,6 +37922,7 @@ static void unixModeBit(unixFile *pFile, unsigned char mask, int *pArg){
 
 /* Forward declaration */
 static int unixGetTempname(int nBuf, char *zBuf);
+static int unixFcntlExternalReader(unixFile*, int*);
 
 /*
 ** Information and control of an open file handle.
@@ -38023,6 +38039,10 @@ static int unixFileControl(sqlite3_file *id, int op, void *pArg){
       return proxyFileControl(id,op,pArg);
     }
 #endif /* SQLITE_ENABLE_LOCKING_STYLE && defined(__APPLE__) */
+
+    case SQLITE_FCNTL_EXTERNAL_READER: {
+      return unixFcntlExternalReader((unixFile*)id, (int*)pArg);
+    }
   }
   return SQLITE_NOTFOUND;
 }
@@ -38267,6 +38287,40 @@ struct unixShm {
 */
 #define UNIX_SHM_BASE   ((22+SQLITE_SHM_NLOCK)*4)         /* first lock byte */
 #define UNIX_SHM_DMS    (UNIX_SHM_BASE+SQLITE_SHM_NLOCK)  /* deadman switch */
+
+/*
+** Use F_GETLK to check whether or not there are any readers with open
+** wal-mode transactions in other processes on database file pFile. If
+** no error occurs, return SQLITE_OK and set (*piOut) to 1 if there are
+** such transactions, or 0 otherwise. If an error occurs, return an
+** SQLite error code. The final value of *piOut is undefined in this
+** case.
+*/
+static int unixFcntlExternalReader(unixFile *pFile, int *piOut){
+  int rc = SQLITE_OK;
+  *piOut = 0;
+  if( pFile->pShm){
+    unixShmNode *pShmNode = pFile->pShm->pShmNode;
+    struct flock f;
+
+    memset(&f, 0, sizeof(f));
+    f.l_type = F_WRLCK;
+    f.l_whence = SEEK_SET;
+    f.l_start = UNIX_SHM_BASE + 3;
+    f.l_len = SQLITE_SHM_NLOCK - 3;
+
+    sqlite3_mutex_enter(pShmNode->pShmMutex);
+    if( osFcntl(pShmNode->hShm, F_GETLK, &f)<0 ){
+      rc = SQLITE_IOERR_LOCK;
+    }else{
+      *piOut = (f.l_type!=F_UNLCK);
+    }
+    sqlite3_mutex_leave(pShmNode->pShmMutex);
+  }
+
+  return rc;
+}
+
 
 /*
 ** Apply posix advisory locks for all bytes from ofst through ofst+n-1.
@@ -48640,7 +48694,7 @@ static int memdbEnlarge(MemFile *p, sqlite3_int64 newSz){
   newSz *= 2;
   if( newSz>p->szMax ) newSz = p->szMax;
   pNew = sqlite3Realloc(p->aData, newSz);
-  if( pNew==0 ) return SQLITE_NOMEM;
+  if( pNew==0 ) return SQLITE_IOERR_NOMEM;
   p->aData = pNew;
   p->szAlloc = newSz;
   return SQLITE_OK;
@@ -108905,33 +108959,44 @@ SQLITE_PRIVATE void sqlite3AlterDropColumn(Parse *pParse, SrcList *pSrc, Token *
     sqlite3OpenTable(pParse, iCur, iDb, pTab, OP_OpenWrite);
     addr = sqlite3VdbeAddOp1(v, OP_Rewind, iCur); VdbeCoverage(v);
     reg = ++pParse->nMem;
-    pParse->nMem += pTab->nCol;
     if( HasRowid(pTab) ){
       sqlite3VdbeAddOp2(v, OP_Rowid, iCur, reg);
+      pParse->nMem += pTab->nCol;
     }else{
       pPk = sqlite3PrimaryKeyIndex(pTab);
+      pParse->nMem += pPk->nColumn;
+      for(i=0; i<pPk->nKeyCol; i++){
+        sqlite3VdbeAddOp3(v, OP_Column, iCur, i, reg+i+1);
+      }
+      nField = pPk->nKeyCol;
     }
+    regRec = ++pParse->nMem;
     for(i=0; i<pTab->nCol; i++){
       if( i!=iCol && (pTab->aCol[i].colFlags & COLFLAG_VIRTUAL)==0 ){
         int regOut;
         if( pPk ){
           int iPos = sqlite3TableColumnToIndex(pPk, i);
           int iColPos = sqlite3TableColumnToIndex(pPk, iCol);
+          if( iPos<pPk->nKeyCol ) continue;
           regOut = reg+1+iPos-(iPos>iColPos);
         }else{
           regOut = reg+1+nField;
         }
-        sqlite3ExprCodeGetColumnOfTable(v, pTab, iCur, i, regOut);
+        if( i==pTab->iPKey ){
+          sqlite3VdbeAddOp2(v, OP_Null, 0, regOut);
+        }else{
+          sqlite3ExprCodeGetColumnOfTable(v, pTab, iCur, i, regOut);
+        }
         nField++;
       }
     }
-    regRec = reg + pTab->nCol;
     sqlite3VdbeAddOp3(v, OP_MakeRecord, reg+1, nField, regRec);
     if( pPk ){
       sqlite3VdbeAddOp4Int(v, OP_IdxInsert, iCur, regRec, reg+1, pPk->nKeyCol);
     }else{
       sqlite3VdbeAddOp3(v, OP_Insert, iCur, regRec, reg);
     }
+    sqlite3VdbeChangeP5(v, OPFLAG_SAVEPOSITION);
 
     sqlite3VdbeAddOp2(v, OP_Next, iCur, addr+1); VdbeCoverage(v);
     sqlite3VdbeJumpHere(v, addr);
@@ -147141,6 +147206,7 @@ static void whereCombineDisjuncts(
   int op;                /* Operator for the combined expression */
   int idxNew;            /* Index in pWC of the next virtual term */
 
+  if( (pOne->wtFlags | pTwo->wtFlags) & TERM_VNULL ) return;
   if( (pOne->eOperator & (WO_EQ|WO_LT|WO_LE|WO_GT|WO_GE))==0 ) return;
   if( (pTwo->eOperator & (WO_EQ|WO_LT|WO_LE|WO_GT|WO_GE))==0 ) return;
   if( (eOp & (WO_EQ|WO_LT|WO_LE))!=eOp
@@ -196566,7 +196632,7 @@ static GeoPoly *geopolyBBox(
       aCoord[2].f = mnY;
       aCoord[3].f = mxY;
     }
-  }else{
+  }else if( aCoord ){
     memset(aCoord, 0, sizeof(RtreeCoord)*4);
   }
   return pOut;
@@ -229627,7 +229693,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2021-04-02 15:20:15 5d4c65779dab868b285519b19e4cf9d451d50c6048f06f653aa701ec212df45e", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2021-04-19 18:32:05 1b256d97b553a9611efca188a3d995a2fff712759044ba480f9a0c9e98fae886", -1, SQLITE_TRANSIENT);
 }
 
 /*
@@ -234673,9 +234739,9 @@ SQLITE_API int sqlite3_stmt_init(
 #endif /* !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_STMTVTAB) */
 
 /************** End of stmt.c ************************************************/
-#if __LINE__!=234676
+#if __LINE__!=234742
 #undef SQLITE_SOURCE_ID
-#define SQLITE_SOURCE_ID      "2021-04-02 15:20:15 5d4c65779dab868b285519b19e4cf9d451d50c6048f06f653aa701ec212dalt2"
+#define SQLITE_SOURCE_ID      "2021-04-19 18:32:05 1b256d97b553a9611efca188a3d995a2fff712759044ba480f9a0c9e98faalt2"
 #endif
 /* Return the source-id for this library */
 SQLITE_API const char *sqlite3_sourceid(void){ return SQLITE_SOURCE_ID; }
