@@ -2719,7 +2719,7 @@ static int SQLITE_TCLAPI DbObjCmd(
     unsigned char *pBA;
     unsigned char *pData;
     int len, xrc;
-    sqlite3_int64 mxSize = 0;
+    Tcl_WideInt mxSize = 0;
     int i;
     int isReadonly = 0;
 
@@ -2769,7 +2769,8 @@ static int SQLITE_TCLAPI DbObjCmd(
         rc = TCL_ERROR;
       }
       if( mxSize>0 ){
-        sqlite3_file_control(pDb->db, zSchema,SQLITE_FCNTL_SIZE_LIMIT,&mxSize);
+        sqlite3_int64 size = (sqlite3_int64)mxSize;
+        sqlite3_file_control(pDb->db, zSchema,SQLITE_FCNTL_SIZE_LIMIT,&size);
       }
     }
 deserialize_error:
