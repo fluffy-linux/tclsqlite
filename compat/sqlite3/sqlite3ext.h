@@ -45,7 +45,7 @@ struct sqlite3_api_routines {
   int  (*bind_value)(sqlite3_stmt*,int,const sqlite3_value*);
   int  (*busy_handler)(sqlite3*,int(*)(void*,int),void*);
   int  (*busy_timeout)(sqlite3*,int ms);
-  sqlite_uint64 (*changes)(sqlite3*);
+  int  (*changes)(sqlite3*);
   int  (*close)(sqlite3*);
   int  (*collation_needed)(sqlite3*,void*,void(*)(void*,sqlite3*,
                            int eTextRep,const char*));
@@ -139,7 +139,7 @@ struct sqlite3_api_routines {
   int  (*table_column_metadata)(sqlite3*,const char*,const char*,const char*,
                                 char const**,char const**,int*,int*,int*);
   void  (*thread_cleanup)(void);
-  sqlite_uint64  (*total_changes)(sqlite3*);
+  int  (*total_changes)(sqlite3*);
   void * (*trace)(sqlite3*,void(*xTrace)(void*,const char*),void*);
   int  (*transfer_bindings)(sqlite3_stmt*,sqlite3_stmt*);
   void * (*update_hook)(sqlite3*,void(*)(void*,int ,char const*,char const*,
@@ -337,6 +337,9 @@ struct sqlite3_api_routines {
   sqlite3_file *(*database_file_object)(const char*);
   /* Version 3.34.0 and later */
   int (*txn_state)(sqlite3*,const char*);
+  /* Version 3.36.1 and later */
+  sqlite3_int64 (*changes64)(sqlite3*);
+  sqlite3_int64 (*total_changes64)(sqlite3*);
 };
 
 /*
@@ -381,10 +384,7 @@ typedef int (*sqlite3_loadext_entry)(
 #define sqlite3_bind_value             sqlite3_api->bind_value
 #define sqlite3_busy_handler           sqlite3_api->busy_handler
 #define sqlite3_busy_timeout           sqlite3_api->busy_timeout
-#undef sqlite3_changes
-#define sqlite3_changes                (int)sqlite3_api->changes
-#undef sqlite3_changes64
-#define sqlite3_changes64              sqlite3_api->changes
+#define sqlite3_changes                sqlite3_api->changes
 #define sqlite3_close                  sqlite3_api->close
 #define sqlite3_collation_needed       sqlite3_api->collation_needed
 #define sqlite3_collation_needed16     sqlite3_api->collation_needed16
@@ -481,11 +481,11 @@ typedef int (*sqlite3_loadext_entry)(
 #define sqlite3_snprintf               sqlite3_api->xsnprintf
 #define sqlite3_step                   sqlite3_api->step
 #define sqlite3_table_column_metadata  sqlite3_api->table_column_metadata
-#undef sqlite3_total_changes
-#define sqlite3_total_changes          (int)sqlite3_api->total_changes
-#undef sqlite3_total_changes64
-#define sqlite3_total_changes64        sqlite3_api->total_changes
+#define sqlite3_total_changes          sqlite3_api->total_changes
 #define sqlite3_trace                  sqlite3_api->trace
+#ifndef SQLITE_OMIT_DEPRECATED
+#define sqlite3_transfer_bindings      sqlite3_api->transfer_bindings
+#endif
 #define sqlite3_update_hook            sqlite3_api->update_hook
 #define sqlite3_user_data              sqlite3_api->user_data
 #define sqlite3_value_blob             sqlite3_api->value_blob
