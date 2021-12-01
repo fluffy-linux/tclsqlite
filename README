@@ -55,5 +55,5 @@ the SQLite developers.
     <http://sqlite.1065341.n5.nabble.com/pragma-database-list-returns-win32-paths-on-Cygwin-td74163.html>
   * ISO time leap second
     <http://sqlite.1065341.n5.nabble.com/ISO-time-leap-second-td77004.html>
-  * update to Unicode 12.1 for FTS3/4/5 tokenizer
+  * update to Unicode 14 for FTS3/4/5 tokenizer
   * Extend memory interfaces from using "int" to "size_t".
