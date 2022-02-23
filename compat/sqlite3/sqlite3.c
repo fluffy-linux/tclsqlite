@@ -42955,8 +42955,6 @@ SQLITE_API int sqlite3_os_init(void){
     UNIXVFS("unix",          cygwinIoFinder ),
 #elif OS_VXWORKS
     UNIXVFS("unix",          vxworksIoFinder ),
-#elif defined(__GNU__) || defined(HAVE_FLOCK)
-    UNIXVFS("unix",          flockIoFinder ),
 #else
     UNIXVFS("unix",          posixIoFinder ),
 #endif
@@ -42973,7 +42971,7 @@ SQLITE_API int sqlite3_os_init(void){
 #if OS_VXWORKS
     UNIXVFS("unix-namedsem", semIoFinder ),
 #endif
-#if SQLITE_ENABLE_LOCKING_STYLE || OS_VXWORKS || defined(__CYGWIN__) || defined(__GNU__)
+#if SQLITE_ENABLE_LOCKING_STYLE || OS_VXWORKS || defined(__CYGWIN__)
     UNIXVFS("unix-posix",    posixIoFinder ),
 #endif
 #if SQLITE_ENABLE_LOCKING_STYLE || defined(__CYGWIN__) || defined(__GNU__) || defined(HAVE_FLOCK)
