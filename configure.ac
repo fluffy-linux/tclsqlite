@@ -116,6 +116,8 @@ if test x$with_system_sqlite != xno; then
    [AC_CHECK_LIB([sqlite3],[sqlite3_initialize],
      [AC_DEFINE(USE_SYSTEM_SQLITE)
       LIBS="$LIBS -lsqlite3"])])
+else
+    TEA_ADD_CFLAGS([-DSQLITE_API=MODULE_SCOPE])
 fi
 
 #--------------------------------------------------------------------
