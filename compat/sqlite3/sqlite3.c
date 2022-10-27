@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.39.2.  By combining all the individual C code files into this
+** version 3.39.4.  By combining all the individual C code files into this
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -454,9 +454,9 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.39.2"
-#define SQLITE_VERSION_NUMBER 3039002
-#define SQLITE_SOURCE_ID      "2022-07-21 15:24:47 698edb77537b67c41adc68f9b892db56bcf9a55e00371a61420f3ddd668e6603"
+#define SQLITE_VERSION        "3.39.4"
+#define SQLITE_VERSION_NUMBER 3039004
+#define SQLITE_SOURCE_ID      "2022-09-29 15:55:41 a29f9949895322123f7c38fbe94c649a9d6e6c9cd0c3b41c96d694552f26b309"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -13161,6 +13161,11 @@ struct fts5_api {
 /************** Continuing where we left off in sqliteInt.h ******************/
 
 /*
+** Reuse the STATIC_LRU for mutex access to sqlite3_temp_directory.
+*/
+#define SQLITE_MUTEX_STATIC_TEMPDIR SQLITE_MUTEX_STATIC_VFS1
+
+/*
 ** Include the configuration header output by 'configure' if we're using the
 ** autoconf-based build
 */
@@ -14494,11 +14499,13 @@ typedef INT16_TYPE LogEst;
 ** TREETRACE_ENABLED will be either 1 or 0 depending on whether or not
 ** the Abstract Syntax Tree tracing logic is turned on.
 */
+#if !defined(SQLITE_AMALGAMATION)
+SQLITE_PRIVATE u32 sqlite3TreeTrace;
+#endif
 #if defined(SQLITE_DEBUG) \
     && (defined(SQLITE_TEST) || defined(SQLITE_ENABLE_SELECTTRACE) \
                              || defined(SQLITE_ENABLE_TREETRACE))
 # define TREETRACE_ENABLED 1
-  SQLITE_PRIVATE u32 sqlite3TreeTrace;
 # define SELECTTRACE(K,P,S,X)  \
   if(sqlite3TreeTrace&(K))   \
     sqlite3DebugPrintf("%u/%d/%p: ",(S)->selId,(P)->addrExplain,(S)),\
@@ -14507,7 +14514,6 @@ typedef INT16_TYPE LogEst;
 # define SELECTTRACE(K,P,S,X)
 # define TREETRACE_ENABLED 0
 #endif
-
 
 /*
 ** Macros for "wheretrace"
@@ -29645,8 +29651,13 @@ SQLITE_PRIVATE void *sqlite3OomFault(sqlite3 *db){
     }
     DisableLookaside;
     if( db->pParse ){
+      Parse *pParse;
       sqlite3ErrorMsg(db->pParse, "out of memory");
       db->pParse->rc = SQLITE_NOMEM_BKPT;
+      for(pParse=db->pParse->pOuterParse; pParse; pParse = pParse->pOuterParse){
+        pParse->nErr++;
+        pParse->rc = SQLITE_NOMEM;
+      }
     }
   }
   return 0;
@@ -33541,7 +33552,7 @@ SQLITE_PRIVATE void sqlite3ErrorMsg(Parse *pParse, const char *zFormat, ...){
   va_list ap;
   sqlite3 *db = pParse->db;
   assert( db!=0 );
-  assert( db->pParse==pParse );
+  assert( db->pParse==pParse || db->pParse->pToplevel==pParse );
   db->errByteOffset = -2;
   va_start(ap, zFormat);
   zMsg = sqlite3VMPrintf(db, zFormat, ap);
@@ -41433,6 +41444,7 @@ static const char *unixTempFileDir(void){
 static int unixGetTempname(int nBuf, char *zBuf){
   const char *zDir;
   int iLimit = 0;
+  int rc = SQLITE_OK;
 
   /* It's odd to simulate an io-error here, but really this is just
   ** using the io-error infrastructure to test that SQLite handles this
@@ -41441,18 +41453,26 @@ static int unixGetTempname(int nBuf, char *zBuf){
   zBuf[0] = 0;
   SimulateIOError( return SQLITE_IOERR );
 
+  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_TEMPDIR));
   zDir = unixTempFileDir();
-  if( zDir==0 ) return SQLITE_IOERR_GETTEMPPATH;
-  do{
-    u64 r;
-    sqlite3_randomness(sizeof(r), &r);
-    assert( nBuf>2 );
-    zBuf[nBuf-2] = 0;
-    sqlite3_snprintf(nBuf, zBuf, "%s/" SQLITE_TEMP_FILE_PREFIX "%llx%c",
-                     zDir, r, 0);
-    if( zBuf[nBuf-2]!=0 || (iLimit++)>10 ) return SQLITE_ERROR;
-  }while( osAccess(zBuf,0)==0 );
-  return SQLITE_OK;
+  if( zDir==0 ){
+    rc = SQLITE_IOERR_GETTEMPPATH;
+  }else{
+    do{
+      u64 r;
+      sqlite3_randomness(sizeof(r), &r);
+      assert( nBuf>2 );
+      zBuf[nBuf-2] = 0;
+      sqlite3_snprintf(nBuf, zBuf, "%s/" SQLITE_TEMP_FILE_PREFIX "%llx%c",
+                       zDir, r, 0);
+      if( zBuf[nBuf-2]!=0 || (iLimit++)>10 ){
+        rc = SQLITE_ERROR;
+        break;
+      }
+    }while( osAccess(zBuf,0)==0 );
+  }
+  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_TEMPDIR));
+  return rc;
 }
 
 #if SQLITE_ENABLE_LOCKING_STYLE && defined(__APPLE__)
@@ -45615,10 +45635,12 @@ SQLITE_API int sqlite3_win32_set_directory8(
   const char *zValue  /* New value for directory being set or reset */
 ){
   char **ppDirectory = 0;
+  int rc;
 #ifndef SQLITE_OMIT_AUTOINIT
-  int rc = sqlite3_initialize();
+  rc = sqlite3_initialize();
   if( rc ) return rc;
 #endif
+  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_TEMPDIR));
   if( type==SQLITE_WIN32_DATA_DIRECTORY_TYPE ){
     ppDirectory = &sqlite3_data_directory;
   }else if( type==SQLITE_WIN32_TEMP_DIRECTORY_TYPE ){
@@ -45633,14 +45655,19 @@ SQLITE_API int sqlite3_win32_set_directory8(
     if( zValue && zValue[0] ){
       zCopy = sqlite3_mprintf("%s", zValue);
       if ( zCopy==0 ){
-        return SQLITE_NOMEM_BKPT;
+        rc = SQLITE_NOMEM_BKPT;
+        goto set_directory8_done;
       }
     }
     sqlite3_free(*ppDirectory);
     *ppDirectory = zCopy;
-    return SQLITE_OK;
+    rc = SQLITE_OK;
+  }else{
+    rc = SQLITE_ERROR;
   }
-  return SQLITE_ERROR;
+set_directory8_done:
+  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_TEMPDIR));
+  return rc;
 }
 
 /*
@@ -48443,6 +48470,18 @@ static int winMakeEndInDirSep(int nBuf, char *zBuf){
 }
 
 /*
+** If sqlite3_temp_directory is not, take the mutex and return true.
+**
+** If sqlite3_temp_directory is NULL, omit the mutex and return false.
+*/
+static int winTempDirDefined(void){
+  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_TEMPDIR));
+  if( sqlite3_temp_directory!=0 ) return 1;
+  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_TEMPDIR));
+  return 0;
+}
+
+/*
 ** Create a temporary file name and store the resulting pointer into pzBuf.
 ** The pointer returned in pzBuf must be freed via sqlite3_free().
 */
@@ -48478,20 +48517,23 @@ static int winGetTempname(sqlite3_vfs *pVfs, char **pzBuf){
   */
   nDir = nMax - (nPre + 15);
   assert( nDir>0 );
-  if( sqlite3_temp_directory ){
+  if( winTempDirDefined() ){
     int nDirLen = sqlite3Strlen30(sqlite3_temp_directory);
     if( nDirLen>0 ){
       if( !winIsDirSep(sqlite3_temp_directory[nDirLen-1]) ){
         nDirLen++;
       }
       if( nDirLen>nDir ){
+        sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_TEMPDIR));
         sqlite3_free(zBuf);
         OSTRACE(("TEMP-FILENAME rc=SQLITE_ERROR\n"));
         return winLogError(SQLITE_ERROR, 0, "winGetTempname1", 0);
       }
       sqlite3_snprintf(nMax, zBuf, "%s", sqlite3_temp_directory);
     }
+    sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_TEMPDIR));
   }
+
 #if defined(__CYGWIN__)
   else{
     static const char *azDirs[] = {
@@ -49282,7 +49324,7 @@ static BOOL winIsVerbatimPathname(
 ** pathname into zOut[].  zOut[] will be at least pVfs->mxPathname
 ** bytes in size.
 */
-static int winFullPathname(
+static int winFullPathnameNoMutex(
   sqlite3_vfs *pVfs,            /* Pointer to vfs object */
   const char *zRelative,        /* Possibly relative input path */
   int nFull,                    /* Size of output buffer in bytes */
@@ -49462,6 +49504,19 @@ static int winFullPathname(
     return SQLITE_IOERR_NOMEM_BKPT;
   }
 #endif
+}
+static int winFullPathname(
+  sqlite3_vfs *pVfs,            /* Pointer to vfs object */
+  const char *zRelative,        /* Possibly relative input path */
+  int nFull,                    /* Size of output buffer in bytes */
+  char *zFull                   /* Output buffer */
+){
+  int rc;
+  sqlite3_mutex *pMutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_TEMPDIR);
+  sqlite3_mutex_enter(pMutex);
+  rc = winFullPathnameNoMutex(pVfs, zRelative, nFull, zFull);
+  sqlite3_mutex_leave(pMutex);
+  return rc;
 }
 
 #ifndef SQLITE_OMIT_LOAD_EXTENSION
@@ -51833,14 +51888,24 @@ SQLITE_PRIVATE void sqlite3PcacheClearSyncFlags(PCache *pCache){
 */
 SQLITE_PRIVATE void sqlite3PcacheMove(PgHdr *p, Pgno newPgno){
   PCache *pCache = p->pCache;
+  sqlite3_pcache_page *pOther;
   assert( p->nRef>0 );
   assert( newPgno>0 );
   assert( sqlite3PcachePageSanity(p) );
   pcacheTrace(("%p.MOVE %d -> %d\n",pCache,p->pgno,newPgno));
+  pOther = sqlite3GlobalConfig.pcache2.xFetch(pCache->pCache, newPgno, 0);
+  if( pOther ){
+    PgHdr *pXPage = (PgHdr*)pOther->pExtra;
+    assert( pXPage->nRef==0 );
+    pXPage->nRef++;
+    pCache->nRefSum++;
+    sqlite3PcacheDrop(pXPage);
+  }
   sqlite3GlobalConfig.pcache2.xRekey(pCache->pCache, p->pPage, p->pgno,newPgno);
   p->pgno = newPgno;
   if( (p->flags&PGHDR_DIRTY) && (p->flags&PGHDR_NEED_SYNC) ){
     pcacheManageDirtyList(p, PCACHE_DIRTYLIST_FRONT);
+    assert( sqlite3PcachePageSanity(p) );
   }
 }
 
@@ -53222,23 +53287,26 @@ static void pcache1Rekey(
   PCache1 *pCache = (PCache1 *)p;
   PgHdr1 *pPage = (PgHdr1 *)pPg;
   PgHdr1 **pp;
-  unsigned int h;
+  unsigned int hOld, hNew;
   assert( pPage->iKey==iOld );
   assert( pPage->pCache==pCache );
+  assert( iOld!=iNew );               /* The page number really is changing */
 
   pcache1EnterMutex(pCache->pGroup);
 
-  h = iOld%pCache->nHash;
-  pp = &pCache->apHash[h];
+  assert( pcache1FetchNoMutex(p, iOld, 0)==pPage ); /* pPg really is iOld */
+  hOld = iOld%pCache->nHash;
+  pp = &pCache->apHash[hOld];
   while( (*pp)!=pPage ){
     pp = &(*pp)->pNext;
   }
   *pp = pPage->pNext;
 
-  h = iNew%pCache->nHash;
+  assert( pcache1FetchNoMutex(p, iNew, 0)==0 ); /* iNew not in cache */
+  hNew = iNew%pCache->nHash;
   pPage->iKey = iNew;
-  pPage->pNext = pCache->apHash[h];
-  pCache->apHash[h] = pPage;
+  pPage->pNext = pCache->apHash[hNew];
+  pCache->apHash[hNew] = pPage;
   if( iNew>pCache->iMaxKey ){
     pCache->iMaxKey = iNew;
   }
@@ -59871,6 +59939,7 @@ static int pager_open_journal(Pager *pPager){
   if( rc!=SQLITE_OK ){
     sqlite3BitvecDestroy(pPager->pInJournal);
     pPager->pInJournal = 0;
+    pPager->journalOff = 0;
   }else{
     assert( pPager->eState==PAGER_WRITER_LOCKED );
     pPager->eState = PAGER_WRITER_CACHEMOD;
@@ -61426,7 +61495,7 @@ SQLITE_PRIVATE int sqlite3PagerGetJournalMode(Pager *pPager){
 SQLITE_PRIVATE int sqlite3PagerOkToChangeJournalMode(Pager *pPager){
   assert( assert_pager_state(pPager) );
   if( pPager->eState>=PAGER_WRITER_CACHEMOD ) return 0;
-  if( NEVER(isOpen(pPager->jfd) && pPager->journalOff>0) ) return 0;
+  if( isOpen(pPager->jfd) && pPager->journalOff>0 ) return 0;
   return 1;
 }
 
@@ -68541,7 +68610,7 @@ static int defragmentPage(MemPage *pPage, int nMaxFrag){
           if( iFree2+sz2 > usableSize ) return SQLITE_CORRUPT_PAGE(pPage);
           memmove(&data[iFree+sz+sz2], &data[iFree+sz], iFree2-(iFree+sz));
           sz += sz2;
-        }else if( NEVER(iFree+sz>usableSize) ){
+        }else if( iFree+sz>usableSize ){
           return SQLITE_CORRUPT_PAGE(pPage);
         }
 
@@ -74897,8 +74966,6 @@ static int balance_nonroot(
   Pgno pgno;                   /* Temp var to store a page number in */
   u8 abDone[NB+2];             /* True after i'th new page is populated */
   Pgno aPgno[NB+2];            /* Page numbers of new pages before shuffling */
-  Pgno aPgOrder[NB+2];         /* Copy of aPgno[] used for sorting pages */
-  u16 aPgFlags[NB+2];          /* flags field of new pages before shuffling */
   CellArray b;                 /* Parsed information on cells being balanced */
 
   memset(abDone, 0, sizeof(abDone));
@@ -75322,42 +75389,39 @@ static int balance_nonroot(
   ** of the table is closer to a linear scan through the file. That in turn
   ** helps the operating system to deliver pages from the disk more rapidly.
   **
-  ** An O(n^2) insertion sort algorithm is used, but since n is never more
-  ** than (NB+2) (a small constant), that should not be a problem.
+  ** An O(N*N) sort algorithm is used, but since N is never more than NB+2
+  ** (5), that is not a performance concern.
   **
   ** When NB==3, this one optimization makes the database about 25% faster
   ** for large insertions and deletions.
   */
   for(i=0; i<nNew; i++){
-    aPgOrder[i] = aPgno[i] = apNew[i]->pgno;
-    aPgFlags[i] = apNew[i]->pDbPage->flags;
-    for(j=0; j<i; j++){
-      if( NEVER(aPgno[j]==aPgno[i]) ){
-        /* This branch is taken if the set of sibling pages somehow contains
-        ** duplicate entries. This can happen if the database is corrupt.
-        ** It would be simpler to detect this as part of the loop below, but
-        ** we do the detection here in order to avoid populating the pager
-        ** cache with two separate objects associated with the same
-        ** page number.  */
-        assert( CORRUPT_DB );
-        rc = SQLITE_CORRUPT_BKPT;
-        goto balance_cleanup;
-      }
-    }
+    aPgno[i] = apNew[i]->pgno;
+    assert( apNew[i]->pDbPage->flags & PGHDR_WRITEABLE );
+    assert( apNew[i]->pDbPage->flags & PGHDR_DIRTY );
   }
-  for(i=0; i<nNew; i++){
-    int iBest = 0;                /* aPgno[] index of page number to use */
-    for(j=1; j<nNew; j++){
-      if( aPgOrder[j]<aPgOrder[iBest] ) iBest = j;
+  for(i=0; i<nNew-1; i++){
+    int iB = i;
+    for(j=i+1; j<nNew; j++){
+      if( apNew[j]->pgno < apNew[iB]->pgno ) iB = j;
     }
-    pgno = aPgOrder[iBest];
-    aPgOrder[iBest] = 0xffffffff;
-    if( iBest!=i ){
-      if( iBest>i ){
-        sqlite3PagerRekey(apNew[iBest]->pDbPage, pBt->nPage+iBest+1, 0);
-      }
-      sqlite3PagerRekey(apNew[i]->pDbPage, pgno, aPgFlags[iBest]);
-      apNew[i]->pgno = pgno;
+
+    /* If apNew[i] has a page number that is bigger than any of the
+    ** subsequence apNew[i] entries, then swap apNew[i] with the subsequent
+    ** entry that has the smallest page number (which we know to be
+    ** entry apNew[iB]).
+    */
+    if( iB!=i ){
+      Pgno pgnoA = apNew[i]->pgno;
+      Pgno pgnoB = apNew[iB]->pgno;
+      Pgno pgnoTemp = (PENDING_BYTE/pBt->pageSize)+1;
+      u16 fgA = apNew[i]->pDbPage->flags;
+      u16 fgB = apNew[iB]->pDbPage->flags;
+      sqlite3PagerRekey(apNew[i]->pDbPage, pgnoTemp, fgB);
+      sqlite3PagerRekey(apNew[iB]->pDbPage, pgnoA, fgA);
+      sqlite3PagerRekey(apNew[i]->pDbPage, pgnoB, fgB);
+      apNew[i]->pgno = pgnoB;
+      apNew[iB]->pgno = pgnoA;
     }
   }
 
@@ -81230,6 +81294,7 @@ SQLITE_PRIVATE int sqlite3VdbeAddFunctionCall(
   addr = sqlite3VdbeAddOp4(v, eCallCtx ? OP_PureFunc : OP_Function,
                            p1, p2, p3, (char*)pCtx, P4_FUNCCTX);
   sqlite3VdbeChangeP5(v, eCallCtx & NC_SelfRef);
+  sqlite3MayAbort(pParse);
   return addr;
 }
 
@@ -81565,6 +81630,7 @@ SQLITE_PRIVATE int sqlite3VdbeAssertMayAbort(Vdbe *v, int mayAbort){
      || opcode==OP_VDestroy
      || opcode==OP_VCreate
      || opcode==OP_ParseSchema
+     || opcode==OP_Function || opcode==OP_PureFunc
      || ((opcode==OP_Halt || opcode==OP_HaltIfNull)
       && ((pOp->p1)!=SQLITE_OK && pOp->p2==OE_Abort))
     ){
@@ -132941,6 +133007,7 @@ SQLITE_PRIVATE void sqlite3Pragma(
   **
   */
   case PragTyp_TEMP_STORE_DIRECTORY: {
+    sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_TEMPDIR));
     if( !zRight ){
       returnSingleText(v, sqlite3_temp_directory);
     }else{
@@ -132950,6 +133017,7 @@ SQLITE_PRIVATE void sqlite3Pragma(
         rc = sqlite3OsAccess(db->pVfs, zRight, SQLITE_ACCESS_READWRITE, &res);
         if( rc!=SQLITE_OK || res==0 ){
           sqlite3ErrorMsg(pParse, "not a writable directory");
+          sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_TEMPDIR));
           goto pragma_out;
         }
       }
@@ -132967,6 +133035,7 @@ SQLITE_PRIVATE void sqlite3Pragma(
       }
 #endif /* SQLITE_OMIT_WSD */
     }
+    sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_TEMPDIR));
     break;
   }
 
@@ -132985,6 +133054,7 @@ SQLITE_PRIVATE void sqlite3Pragma(
   **
   */
   case PragTyp_DATA_STORE_DIRECTORY: {
+    sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_TEMPDIR));
     if( !zRight ){
       returnSingleText(v, sqlite3_data_directory);
     }else{
@@ -132994,6 +133064,7 @@ SQLITE_PRIVATE void sqlite3Pragma(
         rc = sqlite3OsAccess(db->pVfs, zRight, SQLITE_ACCESS_READWRITE, &res);
         if( rc!=SQLITE_OK || res==0 ){
           sqlite3ErrorMsg(pParse, "not a writable directory");
+          sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_TEMPDIR));
           goto pragma_out;
         }
       }
@@ -133005,6 +133076,7 @@ SQLITE_PRIVATE void sqlite3Pragma(
       }
 #endif /* SQLITE_OMIT_WSD */
     }
+    sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_TEMPDIR));
     break;
   }
 #endif
@@ -137450,7 +137522,7 @@ static void generateSortTail(
     if( addrOnce ) sqlite3VdbeJumpHere(v, addrOnce);
     addr = 1 + sqlite3VdbeAddOp2(v, OP_SorterSort, iTab, addrBreak);
     VdbeCoverage(v);
-    codeOffset(v, p->iOffset, addrContinue);
+    assert( p->iLimit==0 && p->iOffset==0 );
     sqlite3VdbeAddOp3(v, OP_SorterData, iTab, regSortOut, iSortTab);
     bSeq = 0;
   }else{
@@ -137458,6 +137530,9 @@ static void generateSortTail(
     codeOffset(v, p->iOffset, addrContinue);
     iSortTab = iTab;
     bSeq = 1;
+    if( p->iOffset>0 ){
+      sqlite3VdbeAddOp2(v, OP_AddImm, p->iLimit, -1);
+    }
   }
   for(i=0, iCol=nKey+bSeq-1; i<nColumn; i++){
 #ifdef SQLITE_ENABLE_SORTER_REFERENCES
@@ -139450,10 +139525,11 @@ static int multiSelectOrderBy(
   */
   sqlite3VdbeResolveLabel(v, labelEnd);
 
-  /* Reassembly the compound query so that it will be freed correctly
+  /* Reassemble the compound query so that it will be freed correctly
   ** by the calling function */
   if( pSplit->pPrior ){
-    sqlite3SelectDelete(db, pSplit->pPrior);
+    sqlite3ParserAddCleanup(pParse,
+       (void(*)(sqlite3*,void*))sqlite3SelectDelete, pSplit->pPrior);
   }
   pSplit->pPrior = pPrior;
   pPrior->pNext = pSplit;
@@ -140969,6 +141045,7 @@ static Table *isSimpleCount(Select *p, AggInfo *pAggInfo){
    || p->pSrc->nSrc!=1
    || p->pSrc->a[0].pSelect
    || pAggInfo->nFunc!=1
+   || p->pHaving
   ){
     return 0;
   }
@@ -144205,6 +144282,23 @@ SQLITE_PRIVATE void sqlite3FinishTrigger(
   if( !db->init.busy ){
     Vdbe *v;
     char *z;
+
+    /* If this is a new CREATE TABLE statement, and if shadow tables
+    ** are read-only, and the trigger makes a change to a shadow table,
+    ** then raise an error - do not allow the trigger to be created. */
+    if( sqlite3ReadOnlyShadowTables(db) ){
+      TriggerStep *pStep;
+      for(pStep=pTrig->step_list; pStep; pStep=pStep->pNext){
+        if( pStep->zTarget!=0
+         && sqlite3ShadowTableName(db, pStep->zTarget)
+        ){
+          sqlite3ErrorMsg(pParse,
+            "trigger \"%s\" may not write to shadow table \"%s\"",
+            pTrig->zName, pStep->zTarget);
+          goto triggerfinish_cleanup;
+        }
+      }
+    }
 
     /* Make an entry in the sqlite_schema table */
     v = sqlite3GetVdbe(pParse);
@@ -150021,7 +150115,8 @@ static int codeEqualityTerm(
         }
         sqlite3ExprDelete(db, pX);
       }else{
-        aiMap = (int*)sqlite3DbMallocZero(pParse->db, sizeof(int)*nEq);
+        int n = sqlite3ExprVectorSize(pX->pLeft);
+        aiMap = (int*)sqlite3DbMallocZero(pParse->db, sizeof(int)*MAX(nEq,n));
         eType = sqlite3FindInIndex(pParse, pX, IN_INDEX_LOOP, 0, aiMap, &iTab);
       }
       pX = pExpr;
@@ -177209,7 +177304,7 @@ struct Fts3MultiSegReader {
   int nAdvance;                   /* How many seg-readers to advance */
   Fts3SegFilter *pFilter;         /* Pointer to filter object */
   char *aBuffer;                  /* Buffer to merge doclists in */
-  int nBuffer;                    /* Allocated size of aBuffer[] in bytes */
+  i64 nBuffer;                    /* Allocated size of aBuffer[] in bytes */
 
   int iColFilter;                 /* If >=0, filter for this column */
   int bRestart;
@@ -179906,7 +180001,7 @@ static int fts3TermSelectMerge(
     **
     ** Similar padding is added in the fts3DoclistOrMerge() function.
     */
-    pTS->aaOutput[0] = sqlite3_malloc(nDoclist + FTS3_VARINT_MAX + 1);
+    pTS->aaOutput[0] = sqlite3_malloc64((i64)nDoclist + FTS3_VARINT_MAX + 1);
     pTS->anOutput[0] = nDoclist;
     if( pTS->aaOutput[0] ){
       memcpy(pTS->aaOutput[0], aDoclist, nDoclist);
@@ -181395,7 +181490,7 @@ static int fts3EvalDeferredPhrase(Fts3Cursor *pCsr, Fts3Phrase *pPhrase){
         nDistance = iPrev - nMaxUndeferred;
       }
 
-      aOut = (char *)sqlite3_malloc(nPoslist+8);
+      aOut = (char *)sqlite3Fts3MallocZero(nPoslist+FTS3_BUFFER_PADDING);
       if( !aOut ){
         sqlite3_free(aPoslist);
         return SQLITE_NOMEM;
@@ -181764,7 +181859,7 @@ static int fts3EvalIncrPhraseNext(
       if( bEof==0 ){
         int nList = 0;
         int nByte = a[p->nToken-1].nList;
-        char *aDoclist = sqlite3_malloc(nByte+FTS3_BUFFER_PADDING);
+        char *aDoclist = sqlite3_malloc64((i64)nByte+FTS3_BUFFER_PADDING);
         if( !aDoclist ) return SQLITE_NOMEM;
         memcpy(aDoclist, a[p->nToken-1].pList, nByte+1);
         memset(&aDoclist[nByte], 0, FTS3_BUFFER_PADDING);
@@ -186000,7 +186095,7 @@ static int porterNext(
       if( n>c->nAllocated ){
         char *pNew;
         c->nAllocated = n+20;
-        pNew = sqlite3_realloc(c->zToken, c->nAllocated);
+        pNew = sqlite3_realloc64(c->zToken, c->nAllocated);
         if( !pNew ) return SQLITE_NOMEM;
         c->zToken = pNew;
       }
@@ -186752,7 +186847,7 @@ static int simpleNext(
       if( n>c->nTokenAllocated ){
         char *pNew;
         c->nTokenAllocated = n+20;
-        pNew = sqlite3_realloc(c->pToken, c->nTokenAllocated);
+        pNew = sqlite3_realloc64(c->pToken, c->nTokenAllocated);
         if( !pNew ) return SQLITE_NOMEM;
         c->pToken = pNew;
       }
@@ -187914,7 +188009,7 @@ static int fts3PendingListAppendVarint(
 
   /* Allocate or grow the PendingList as required. */
   if( !p ){
-    p = sqlite3_malloc(sizeof(*p) + 100);
+    p = sqlite3_malloc64(sizeof(*p) + 100);
     if( !p ){
       return SQLITE_NOMEM;
     }
@@ -187923,14 +188018,14 @@ static int fts3PendingListAppendVarint(
     p->nData = 0;
   }
   else if( p->nData+FTS3_VARINT_MAX+1>p->nSpace ){
-    int nNew = p->nSpace * 2;
-    p = sqlite3_realloc(p, sizeof(*p) + nNew);
+    i64 nNew = p->nSpace * 2;
+    p = sqlite3_realloc64(p, sizeof(*p) + nNew);
     if( !p ){
       sqlite3_free(*pp);
       *pp = 0;
       return SQLITE_NOMEM;
     }
-    p->nSpace = nNew;
+    p->nSpace = (int)nNew;
     p->aData = (char *)&p[1];
   }
 
@@ -188487,7 +188582,7 @@ SQLITE_PRIVATE int sqlite3Fts3ReadBlock(
     int nByte = sqlite3_blob_bytes(p->pSegments);
     *pnBlob = nByte;
     if( paBlob ){
-      char *aByte = sqlite3_malloc(nByte + FTS3_NODE_PADDING);
+      char *aByte = sqlite3_malloc64((i64)nByte + FTS3_NODE_PADDING);
       if( !aByte ){
         rc = SQLITE_NOMEM;
       }else{
@@ -188604,7 +188699,7 @@ static int fts3SegReaderNext(
         int nTerm = fts3HashKeysize(pElem);
         if( (nTerm+1)>pReader->nTermAlloc ){
           sqlite3_free(pReader->zTerm);
-          pReader->zTerm = (char*)sqlite3_malloc((nTerm+1)*2);
+          pReader->zTerm = (char*)sqlite3_malloc64(((i64)nTerm+1)*2);
           if( !pReader->zTerm ) return SQLITE_NOMEM;
           pReader->nTermAlloc = (nTerm+1)*2;
         }
@@ -188612,7 +188707,7 @@ static int fts3SegReaderNext(
         pReader->zTerm[nTerm] = '\0';
         pReader->nTerm = nTerm;
 
-        aCopy = (char*)sqlite3_malloc(nCopy);
+        aCopy = (char*)sqlite3_malloc64(nCopy);
         if( !aCopy ) return SQLITE_NOMEM;
         memcpy(aCopy, pList->aData, nCopy);
         pReader->nNode = pReader->nDoclist = nCopy;
@@ -188899,7 +188994,7 @@ SQLITE_PRIVATE int sqlite3Fts3SegReaderNew(
     nExtra = nRoot + FTS3_NODE_PADDING;
   }
 
-  pReader = (Fts3SegReader *)sqlite3_malloc(sizeof(Fts3SegReader) + nExtra);
+  pReader = (Fts3SegReader *)sqlite3_malloc64(sizeof(Fts3SegReader) + nExtra);
   if( !pReader ){
     return SQLITE_NOMEM;
   }
@@ -188991,7 +189086,7 @@ SQLITE_PRIVATE int sqlite3Fts3SegReaderPending(
         if( nElem==nAlloc ){
           Fts3HashElem **aElem2;
           nAlloc += 16;
-          aElem2 = (Fts3HashElem **)sqlite3_realloc(
+          aElem2 = (Fts3HashElem **)sqlite3_realloc64(
               aElem, nAlloc*sizeof(Fts3HashElem *)
           );
           if( !aElem2 ){
@@ -189325,7 +189420,7 @@ static int fts3NodeAddTerm(
         ** this is not expected to be a serious problem.
         */
         assert( pTree->aData==(char *)&pTree[1] );
-        pTree->aData = (char *)sqlite3_malloc(nReq);
+        pTree->aData = (char *)sqlite3_malloc64(nReq);
         if( !pTree->aData ){
           return SQLITE_NOMEM;
         }
@@ -189343,7 +189438,7 @@ static int fts3NodeAddTerm(
 
       if( isCopyTerm ){
         if( pTree->nMalloc<nTerm ){
-          char *zNew = sqlite3_realloc(pTree->zMalloc, nTerm*2);
+          char *zNew = sqlite3_realloc64(pTree->zMalloc, (i64)nTerm*2);
           if( !zNew ){
             return SQLITE_NOMEM;
           }
@@ -189369,7 +189464,7 @@ static int fts3NodeAddTerm(
   ** now. Instead, the term is inserted into the parent of pTree. If pTree
   ** has no parent, one is created here.
   */
-  pNew = (SegmentNode *)sqlite3_malloc(sizeof(SegmentNode) + p->nNodeSize);
+  pNew = (SegmentNode *)sqlite3_malloc64(sizeof(SegmentNode) + p->nNodeSize);
   if( !pNew ){
     return SQLITE_NOMEM;
   }
@@ -189507,7 +189602,7 @@ static int fts3SegWriterAdd(
 ){
   int nPrefix;                    /* Size of term prefix in bytes */
   int nSuffix;                    /* Size of term suffix in bytes */
-  int nReq;                       /* Number of bytes required on leaf page */
+  i64 nReq;                       /* Number of bytes required on leaf page */
   int nData;
   SegmentWriter *pWriter = *ppWriter;
 
@@ -189516,13 +189611,13 @@ static int fts3SegWriterAdd(
     sqlite3_stmt *pStmt;
 
     /* Allocate the SegmentWriter structure */
-    pWriter = (SegmentWriter *)sqlite3_malloc(sizeof(SegmentWriter));
+    pWriter = (SegmentWriter *)sqlite3_malloc64(sizeof(SegmentWriter));
     if( !pWriter ) return SQLITE_NOMEM;
     memset(pWriter, 0, sizeof(SegmentWriter));
     *ppWriter = pWriter;
 
     /* Allocate a buffer in which to accumulate data */
-    pWriter->aData = (char *)sqlite3_malloc(p->nNodeSize);
+    pWriter->aData = (char *)sqlite3_malloc64(p->nNodeSize);
     if( !pWriter->aData ) return SQLITE_NOMEM;
     pWriter->nSize = p->nNodeSize;
 
@@ -189597,7 +189692,7 @@ static int fts3SegWriterAdd(
   ** the buffer to make it large enough.
   */
   if( nReq>pWriter->nSize ){
-    char *aNew = sqlite3_realloc(pWriter->aData, nReq);
+    char *aNew = sqlite3_realloc64(pWriter->aData, nReq);
     if( !aNew ) return SQLITE_NOMEM;
     pWriter->aData = aNew;
     pWriter->nSize = nReq;
@@ -189622,7 +189717,7 @@ static int fts3SegWriterAdd(
   */
   if( isCopyTerm ){
     if( nTerm>pWriter->nMalloc ){
-      char *zNew = sqlite3_realloc(pWriter->zMalloc, nTerm*2);
+      char *zNew = sqlite3_realloc64(pWriter->zMalloc, (i64)nTerm*2);
       if( !zNew ){
         return SQLITE_NOMEM;
       }
@@ -189930,12 +190025,12 @@ static void fts3ColumnFilter(
 static int fts3MsrBufferData(
   Fts3MultiSegReader *pMsr,       /* Multi-segment-reader handle */
   char *pList,
-  int nList
+  i64 nList
 ){
   if( nList>pMsr->nBuffer ){
     char *pNew;
     pMsr->nBuffer = nList*2;
-    pNew = (char *)sqlite3_realloc(pMsr->aBuffer, pMsr->nBuffer);
+    pNew = (char *)sqlite3_realloc64(pMsr->aBuffer, pMsr->nBuffer);
     if( !pNew ) return SQLITE_NOMEM;
     pMsr->aBuffer = pNew;
   }
@@ -189991,7 +190086,7 @@ SQLITE_PRIVATE int sqlite3Fts3MsrIncrNext(
       fts3SegReaderSort(pMsr->apSegment, nMerge, j, xCmp);
 
       if( nList>0 && fts3SegReaderIsPending(apSegment[0]) ){
-        rc = fts3MsrBufferData(pMsr, pList, nList+1);
+        rc = fts3MsrBufferData(pMsr, pList, (i64)nList+1);
         if( rc!=SQLITE_OK ) return rc;
         assert( (pMsr->aBuffer[nList] & 0xFE)==0x00 );
         pList = pMsr->aBuffer;
@@ -190128,11 +190223,11 @@ SQLITE_PRIVATE int sqlite3Fts3MsrIncrRestart(Fts3MultiSegReader *pCsr){
   return SQLITE_OK;
 }
 
-static int fts3GrowSegReaderBuffer(Fts3MultiSegReader *pCsr, int nReq){
+static int fts3GrowSegReaderBuffer(Fts3MultiSegReader *pCsr, i64 nReq){
   if( nReq>pCsr->nBuffer ){
     char *aNew;
     pCsr->nBuffer = nReq*2;
-    aNew = sqlite3_realloc(pCsr->aBuffer, pCsr->nBuffer);
+    aNew = sqlite3_realloc64(pCsr->aBuffer, pCsr->nBuffer);
     if( !aNew ){
       return SQLITE_NOMEM;
     }
@@ -190223,7 +190318,8 @@ SQLITE_PRIVATE int sqlite3Fts3SegReaderStep(
     ){
       pCsr->nDoclist = apSegment[0]->nDoclist;
       if( fts3SegReaderIsPending(apSegment[0]) ){
-        rc = fts3MsrBufferData(pCsr, apSegment[0]->aDoclist, pCsr->nDoclist);
+        rc = fts3MsrBufferData(pCsr, apSegment[0]->aDoclist,
+                               (i64)pCsr->nDoclist);
         pCsr->aDoclist = pCsr->aBuffer;
       }else{
         pCsr->aDoclist = apSegment[0]->aDoclist;
@@ -190276,7 +190372,8 @@ SQLITE_PRIVATE int sqlite3Fts3SegReaderStep(
 
           nByte = sqlite3Fts3VarintLen(iDelta) + (isRequirePos?nList+1:0);
 
-          rc = fts3GrowSegReaderBuffer(pCsr, nByte+nDoclist+FTS3_NODE_PADDING);
+          rc = fts3GrowSegReaderBuffer(pCsr,
+                                   (i64)nByte+nDoclist+FTS3_NODE_PADDING);
           if( rc ) return rc;
 
           if( isFirst ){
@@ -190302,7 +190399,7 @@ SQLITE_PRIVATE int sqlite3Fts3SegReaderStep(
         fts3SegReaderSort(apSegment, nMerge, j, xCmp);
       }
       if( nDoclist>0 ){
-        rc = fts3GrowSegReaderBuffer(pCsr, nDoclist+FTS3_NODE_PADDING);
+        rc = fts3GrowSegReaderBuffer(pCsr, (i64)nDoclist+FTS3_NODE_PADDING);
         if( rc ) return rc;
         memset(&pCsr->aBuffer[nDoclist], 0, FTS3_NODE_PADDING);
         pCsr->aDoclist = pCsr->aBuffer;
@@ -191015,7 +191112,7 @@ struct NodeReader {
 static void blobGrowBuffer(Blob *pBlob, int nMin, int *pRc){
   if( *pRc==SQLITE_OK && nMin>pBlob->nAlloc ){
     int nAlloc = nMin;
-    char *a = (char *)sqlite3_realloc(pBlob->a, nAlloc);
+    char *a = (char *)sqlite3_realloc64(pBlob->a, nAlloc);
     if( a ){
       pBlob->nAlloc = nAlloc;
       pBlob->a = a;
@@ -191812,7 +191909,7 @@ static int fts3RepackSegdirLevel(
       if( nIdx>=nAlloc ){
         int *aNew;
         nAlloc += 16;
-        aNew = sqlite3_realloc(aIdx, nAlloc*sizeof(int));
+        aNew = sqlite3_realloc64(aIdx, nAlloc*sizeof(int));
         if( !aNew ){
           rc = SQLITE_NOMEM;
           break;
@@ -192186,7 +192283,7 @@ SQLITE_PRIVATE int sqlite3Fts3Incrmerge(Fts3Table *p, int nMerge, int nMin){
 
   /* Allocate space for the cursor, filter and writer objects */
   const int nAlloc = sizeof(*pCsr) + sizeof(*pFilter) + sizeof(*pWriter);
-  pWriter = (IncrmergeWriter *)sqlite3_malloc(nAlloc);
+  pWriter = (IncrmergeWriter *)sqlite3_malloc64(nAlloc);
   if( !pWriter ) return SQLITE_NOMEM;
   pFilter = (Fts3SegFilter *)&pWriter[1];
   pCsr = (Fts3MultiSegReader *)&pFilter[1];
@@ -192822,7 +192919,7 @@ SQLITE_PRIVATE int sqlite3Fts3DeferredTokenList(
     return SQLITE_OK;
   }
 
-  pRet = (char *)sqlite3_malloc(p->pList->nData);
+  pRet = (char *)sqlite3_malloc64(p->pList->nData);
   if( !pRet ) return SQLITE_NOMEM;
 
   nSkip = sqlite3Fts3GetVarint(p->pList->aData, &dummy);
@@ -192842,7 +192939,7 @@ SQLITE_PRIVATE int sqlite3Fts3DeferToken(
   int iCol                        /* Column that token must appear in (or -1) */
 ){
   Fts3DeferredToken *pDeferred;
-  pDeferred = sqlite3_malloc(sizeof(*pDeferred));
+  pDeferred = sqlite3_malloc64(sizeof(*pDeferred));
   if( !pDeferred ){
     return SQLITE_NOMEM;
   }
@@ -195297,91 +195394,93 @@ SQLITE_PRIVATE int sqlite3FtsUnicodeIsalnum(int c){
     0x0030F001, 0x0030F807, 0x00311803, 0x00312804, 0x00315402,
     0x00318802, 0x0031DC01, 0x0031FC01, 0x00320404, 0x0032F001,
     0x0032F807, 0x00331803, 0x00332804, 0x00335402, 0x00338802,
-    0x00340004, 0x0034EC02, 0x0034F807, 0x00351803, 0x00352804,
-    0x00353C01, 0x00355C01, 0x00358802, 0x0035E401, 0x00360403,
-    0x00372801, 0x00373C06, 0x00375801, 0x00376008, 0x0037C803,
-    0x0038C401, 0x0038D007, 0x0038FC01, 0x00391C09, 0x00396802,
-    0x003AC401, 0x003AD009, 0x003B2006, 0x003C041F, 0x003CD00C,
-    0x003DC417, 0x003E340B, 0x003E6424, 0x003EF80F, 0x003F380D,
-    0x0040AC14, 0x00412806, 0x00415804, 0x00417803, 0x00418803,
-    0x00419C07, 0x0041C404, 0x0042080C, 0x00423C01, 0x00426806,
-    0x0043EC01, 0x004D740C, 0x004E400A, 0x00500001, 0x0059B402,
-    0x005A0001, 0x005A6C02, 0x005BAC03, 0x005C4804, 0x005CC805,
-    0x005D4802, 0x005DC802, 0x005ED023, 0x005F6004, 0x005F7401,
-    0x00600010, 0x00621402, 0x0062A401, 0x0064800C, 0x0064C00C,
-    0x00650001, 0x00651002, 0x00677822, 0x00685C05, 0x00687802,
-    0x0069540A, 0x0069801D, 0x0069FC01, 0x006A8007, 0x006AA006,
-    0x006AC01F, 0x006C0005, 0x006CD011, 0x006D6825, 0x006E0003,
-    0x006E840D, 0x006F980E, 0x006FF004, 0x00709014, 0x0070EC05,
-    0x0071F802, 0x00730008, 0x00734019, 0x0073B401, 0x0073D001,
-    0x0073DC03, 0x00770040, 0x007EF401, 0x007EFC03, 0x007F3403,
-    0x007F7403, 0x007FB403, 0x007FF402, 0x00800065, 0x0081980A,
-    0x0081E805, 0x00822805, 0x00828021, 0x00834021, 0x00840002,
-    0x00840C04, 0x00842002, 0x00845001, 0x00845803, 0x00847806,
-    0x00849401, 0x00849C01, 0x0084A401, 0x0084B801, 0x0084E802,
-    0x00850005, 0x00852804, 0x00853C01, 0x00862802, 0x00864297,
-    0x0091000B, 0x0092704E, 0x00940276, 0x009E53E0, 0x00ADD820,
-    0x00AE5C69, 0x00B39406, 0x00B3BC03, 0x00B3E404, 0x00B3F802,
-    0x00B5C001, 0x00B5FC01, 0x00B7804F, 0x00B8C02E, 0x00BA001A,
-    0x00BA6C59, 0x00BC00D6, 0x00BFC00C, 0x00C00005, 0x00C02019,
-    0x00C0A807, 0x00C0D802, 0x00C0F403, 0x00C26404, 0x00C28001,
-    0x00C3EC01, 0x00C64002, 0x00C6580A, 0x00C70024, 0x00C8001F,
-    0x00C8A81E, 0x00C94001, 0x00C98020, 0x00CA2827, 0x00CB0140,
-    0x01370040, 0x02924037, 0x0293F802, 0x02983403, 0x0299BC10,
-    0x029A7802, 0x029BC008, 0x029C0017, 0x029C8002, 0x029E2402,
-    0x02A00801, 0x02A01801, 0x02A02C01, 0x02A08C0A, 0x02A0D804,
-    0x02A1D004, 0x02A20002, 0x02A2D012, 0x02A33802, 0x02A38012,
-    0x02A3E003, 0x02A3F001, 0x02A3FC01, 0x02A4980A, 0x02A51C0D,
-    0x02A57C01, 0x02A60004, 0x02A6CC1B, 0x02A77802, 0x02A79401,
-    0x02A8A40E, 0x02A90C01, 0x02A93002, 0x02A97004, 0x02A9DC03,
-    0x02A9EC03, 0x02AAC001, 0x02AAC803, 0x02AADC02, 0x02AAF802,
-    0x02AB0401, 0x02AB7802, 0x02ABAC07, 0x02ABD402, 0x02AD6C01,
-    0x02ADA802, 0x02AF8C0B, 0x03600001, 0x036DFC02, 0x036FFC02,
-    0x037FFC01, 0x03EC7801, 0x03ECA401, 0x03EEC811, 0x03F4F812,
-    0x03F73C01, 0x03F7F01E, 0x03F88033, 0x03F95013, 0x03F9A004,
-    0x03FBFC01, 0x03FC040F, 0x03FC6807, 0x03FCEC06, 0x03FD6C0B,
-    0x03FF8007, 0x03FFA007, 0x03FFE405, 0x04040003, 0x0404DC09,
-    0x0405E411, 0x04063003, 0x0406400D, 0x04068001, 0x0407402E,
-    0x040B8001, 0x040DD805, 0x040E7C01, 0x040F4001, 0x0415BC01,
-    0x04215C01, 0x0421DC02, 0x04247C01, 0x0424FC01, 0x04280403,
-    0x04281402, 0x04283004, 0x0428E003, 0x0428FC01, 0x04294009,
-    0x0429FC01, 0x042B2001, 0x042B9402, 0x042BC007, 0x042CE407,
-    0x042E6404, 0x04349004, 0x043AAC03, 0x043D180B, 0x043D5405,
-    0x043E0808, 0x04400003, 0x0440E016, 0x0441C001, 0x0441CC02,
-    0x0441FC04, 0x0442C013, 0x04433401, 0x04440003, 0x04449C0E,
-    0x04450004, 0x04451402, 0x0445CC03, 0x04460003, 0x0446CC0E,
-    0x0447140B, 0x04476C01, 0x04477403, 0x0448B013, 0x044AA401,
-    0x044B7C0C, 0x044C0004, 0x044CEC02, 0x044CF807, 0x044D1C02,
-    0x044D2C03, 0x044D5C01, 0x044D8802, 0x044D9807, 0x044DC005,
-    0x0450D412, 0x04512C05, 0x04516802, 0x04517402, 0x0452C014,
-    0x04531801, 0x0456BC07, 0x0456E020, 0x04577002, 0x0458C014,
-    0x0459800D, 0x045AAC0D, 0x045AE401, 0x045C740F, 0x045CF004,
-    0x0460B010, 0x0464C006, 0x0464DC02, 0x0464EC04, 0x04650001,
-    0x04650805, 0x04674407, 0x04676807, 0x04678801, 0x04679001,
-    0x0468040A, 0x0468CC07, 0x0468EC0D, 0x0469440B, 0x046A2813,
-    0x046A7805, 0x0470BC08, 0x0470E008, 0x04710405, 0x0471C002,
-    0x04724816, 0x0472A40E, 0x0474C406, 0x0474E801, 0x0474F002,
-    0x0474FC07, 0x04751C01, 0x04762805, 0x04764002, 0x04764C05,
-    0x047BCC06, 0x047F541D, 0x047FFC01, 0x0491C005, 0x04BFC402,
-    0x04D0C009, 0x05A9B802, 0x05ABC006, 0x05ACC010, 0x05AD1002,
-    0x05BA5C04, 0x05BD3C01, 0x05BD4437, 0x05BE3C04, 0x05BF8801,
-    0x05BF9001, 0x05BFC002, 0x06F27008, 0x073C002E, 0x073CC017,
-    0x073D4074, 0x074000F6, 0x07440027, 0x0744A4C2, 0x07480046,
-    0x074C0057, 0x075B0401, 0x075B6C01, 0x075BEC01, 0x075C5401,
-    0x075CD401, 0x075D3C01, 0x075DBC01, 0x075E2401, 0x075EA401,
-    0x075F0C01, 0x0760028C, 0x076A6C05, 0x076A840F, 0x07800007,
-    0x07802011, 0x07806C07, 0x07808C02, 0x07809805, 0x0784C007,
-    0x07853C01, 0x078AB801, 0x078BB004, 0x078BFC01, 0x07A34007,
-    0x07A51007, 0x07A57802, 0x07B2B001, 0x07B2C001, 0x07B4B801,
-    0x07BBC002, 0x07C0002C, 0x07C0C064, 0x07C2800F, 0x07C2C40F,
-    0x07C3040F, 0x07C34425, 0x07C434A1, 0x07C7981D, 0x07C8402C,
-    0x07C90009, 0x07C94002, 0x07C98006, 0x07CC03D8, 0x07DB7410,
-    0x07DBC00D, 0x07DC0074, 0x07DE0059, 0x07DF800C, 0x07DFC001,
-    0x07E0000C, 0x07E04038, 0x07E1400A, 0x07E18028, 0x07E2401E,
-    0x07E2C002, 0x07E40154, 0x07E9800E, 0x07E9C005, 0x07E9E005,
-    0x07EA0007, 0x07EA401D, 0x07EAC00B, 0x07EB0006, 0x07EB400A,
-    0x07EB8008, 0x07EBC007, 0x07EC0093, 0x07EE5037, 0x38000401,
-    0x38008060, 0x380400F0,
+    0x0033CC01, 0x00340004, 0x0034EC02, 0x0034F807, 0x00351803,
+    0x00352804, 0x00353C01, 0x00355C01, 0x00358802, 0x0035E401,
+    0x00360403, 0x00372801, 0x00373C06, 0x00375801, 0x00376008,
+    0x0037C803, 0x0038C401, 0x0038D007, 0x0038FC01, 0x00391C09,
+    0x00396802, 0x003AC401, 0x003AD009, 0x003B2007, 0x003C041F,
+    0x003CD00C, 0x003DC417, 0x003E340B, 0x003E6424, 0x003EF80F,
+    0x003F380D, 0x0040AC14, 0x00412806, 0x00415804, 0x00417803,
+    0x00418803, 0x00419C07, 0x0041C404, 0x0042080C, 0x00423C01,
+    0x00426806, 0x0043EC01, 0x004D740C, 0x004E400A, 0x00500001,
+    0x0059B402, 0x005A0001, 0x005A6C02, 0x005BAC03, 0x005C4804,
+    0x005CC805, 0x005D4802, 0x005DC802, 0x005ED023, 0x005F6004,
+    0x005F7401, 0x00600010, 0x00621402, 0x0062A401, 0x0064800C,
+    0x0064C00C, 0x00650001, 0x00651002, 0x00677822, 0x00685C05,
+    0x00687802, 0x0069540A, 0x0069801D, 0x0069FC01, 0x006A8007,
+    0x006AA006, 0x006AC01F, 0x006C0005, 0x006CD011, 0x006D6825,
+    0x006E0003, 0x006E840D, 0x006F980E, 0x006FF004, 0x00709014,
+    0x0070EC05, 0x0071F802, 0x00730008, 0x00734019, 0x0073B401,
+    0x0073D001, 0x0073DC03, 0x00770040, 0x007EF401, 0x007EFC03,
+    0x007F3403, 0x007F7403, 0x007FB403, 0x007FF402, 0x00800065,
+    0x0081980A, 0x0081E805, 0x00822805, 0x00828021, 0x00834021,
+    0x00840002, 0x00840C04, 0x00842002, 0x00845001, 0x00845803,
+    0x00847806, 0x00849401, 0x00849C01, 0x0084A401, 0x0084B801,
+    0x0084E802, 0x00850005, 0x00852804, 0x00853C01, 0x00862802,
+    0x00864297, 0x0091000B, 0x0092704E, 0x00940276, 0x009E53E0,
+    0x00ADD820, 0x00AE5C69, 0x00B39406, 0x00B3BC03, 0x00B3E404,
+    0x00B3F802, 0x00B5C001, 0x00B5FC01, 0x00B7804F, 0x00B8C02E,
+    0x00BA001A, 0x00BA6C59, 0x00BC00D6, 0x00BFC00C, 0x00C00005,
+    0x00C02019, 0x00C0A807, 0x00C0D802, 0x00C0F403, 0x00C26404,
+    0x00C28001, 0x00C3EC01, 0x00C64002, 0x00C6580A, 0x00C70024,
+    0x00C8001F, 0x00C8A81E, 0x00C94001, 0x00C98020, 0x00CA2827,
+    0x00CB0140, 0x01370040, 0x02924037, 0x0293F802, 0x02983403,
+    0x0299BC10, 0x029A7802, 0x029BC008, 0x029C0017, 0x029C8002,
+    0x029E2402, 0x02A00801, 0x02A01801, 0x02A02C01, 0x02A08C0A,
+    0x02A0D804, 0x02A1D004, 0x02A20002, 0x02A2D012, 0x02A33802,
+    0x02A38012, 0x02A3E003, 0x02A3F001, 0x02A3FC01, 0x02A4980A,
+    0x02A51C0D, 0x02A57C01, 0x02A60004, 0x02A6CC1B, 0x02A77802,
+    0x02A79401, 0x02A8A40E, 0x02A90C01, 0x02A93002, 0x02A97004,
+    0x02A9DC03, 0x02A9EC03, 0x02AAC001, 0x02AAC803, 0x02AADC02,
+    0x02AAF802, 0x02AB0401, 0x02AB7802, 0x02ABAC07, 0x02ABD402,
+    0x02AD6C01, 0x02ADA802, 0x02AF8C0B, 0x03600001, 0x036DFC02,
+    0x036FFC02, 0x037FFC01, 0x03EC7801, 0x03ECA401, 0x03EEC811,
+    0x03F4F812, 0x03F73C01, 0x03F7F01E, 0x03F88033, 0x03F95013,
+    0x03F9A004, 0x03FBFC01, 0x03FC040F, 0x03FC6807, 0x03FCEC06,
+    0x03FD6C0B, 0x03FF8007, 0x03FFA007, 0x03FFE405, 0x04040003,
+    0x0404DC09, 0x0405E411, 0x04063003, 0x0406400D, 0x04068001,
+    0x0407402E, 0x040B8001, 0x040DD805, 0x040E7C01, 0x040F4001,
+    0x0415BC01, 0x04215C01, 0x0421DC02, 0x04247C01, 0x0424FC01,
+    0x04280403, 0x04281402, 0x04283004, 0x0428E003, 0x0428FC01,
+    0x04294009, 0x0429FC01, 0x042B2001, 0x042B9402, 0x042BC007,
+    0x042CE407, 0x042E6404, 0x04349004, 0x043AAC03, 0x043BF403,
+    0x043D180B, 0x043D5405, 0x043E0808, 0x04400003, 0x0440E016,
+    0x0441C001, 0x0441CC02, 0x0441FC04, 0x0442C013, 0x04433401,
+    0x04440003, 0x04449C0E, 0x04450004, 0x04451402, 0x0445CC03,
+    0x04460003, 0x0446CC0E, 0x0447140B, 0x04476C01, 0x04477403,
+    0x0448B013, 0x04490401, 0x044AA401, 0x044B7C0C, 0x044C0004,
+    0x044CEC02, 0x044CF807, 0x044D1C02, 0x044D2C03, 0x044D5C01,
+    0x044D8802, 0x044D9807, 0x044DC005, 0x0450D412, 0x04512C05,
+    0x04516802, 0x04517402, 0x0452C014, 0x04531801, 0x0456BC07,
+    0x0456E020, 0x04577002, 0x0458C014, 0x0459800D, 0x045AAC0D,
+    0x045AE401, 0x045C740F, 0x045CF004, 0x0460B010, 0x0464C006,
+    0x0464DC02, 0x0464EC04, 0x04650001, 0x04650805, 0x04674407,
+    0x04676807, 0x04678801, 0x04679001, 0x0468040A, 0x0468CC07,
+    0x0468EC0D, 0x0469440B, 0x046A2813, 0x046A7805, 0x046C000A,
+    0x0470BC08, 0x0470E008, 0x04710405, 0x0471C002, 0x04724816,
+    0x0472A40E, 0x0474C406, 0x0474E801, 0x0474F002, 0x0474FC07,
+    0x04751C01, 0x04762805, 0x04764002, 0x04764C05, 0x047BCC06,
+    0x047C0002, 0x047C0C01, 0x047CD007, 0x047CF812, 0x047F541D,
+    0x047FFC01, 0x0491C005, 0x04BFC402, 0x04D0C011, 0x04D11C0F,
+    0x05A9B802, 0x05ABC006, 0x05ACC010, 0x05AD1002, 0x05BA5C04,
+    0x05BD3C01, 0x05BD4437, 0x05BE3C04, 0x05BF8801, 0x05BF9001,
+    0x05BFC002, 0x06F27008, 0x073C002E, 0x073CC017, 0x073D4074,
+    0x074000F6, 0x07440027, 0x0744A4C2, 0x07480046, 0x074C0057,
+    0x075B0401, 0x075B6C01, 0x075BEC01, 0x075C5401, 0x075CD401,
+    0x075D3C01, 0x075DBC01, 0x075E2401, 0x075EA401, 0x075F0C01,
+    0x0760028C, 0x076A6C05, 0x076A840F, 0x07800007, 0x07802011,
+    0x07806C07, 0x07808C02, 0x07809805, 0x07823C01, 0x0784C007,
+    0x07853C01, 0x078AB801, 0x078BB004, 0x078BFC01, 0x0793B004,
+    0x07A34007, 0x07A51007, 0x07A57802, 0x07B2B001, 0x07B2C001,
+    0x07B4B801, 0x07BBC002, 0x07C0002C, 0x07C0C064, 0x07C2800F,
+    0x07C2C40F, 0x07C3040F, 0x07C34425, 0x07C434A1, 0x07C7981D,
+    0x07C8402C, 0x07C90009, 0x07C94002, 0x07C98006, 0x07CC03D8,
+    0x07DB7011, 0x07DBC00D, 0x07DC0077, 0x07DDEC5F, 0x07DF800C,
+    0x07DFC001, 0x07E0000C, 0x07E04038, 0x07E1400A, 0x07E18028,
+    0x07E2401E, 0x07E2C002, 0x07E40154, 0x07E9800E, 0x07E9C00D,
+    0x07EA0009, 0x07EA402E, 0x07EAFC07, 0x07EB380E, 0x07EB8009,
+    0x07EBC009, 0x07EC0093, 0x07EE5037, 0x38000401, 0x38008060,
+    0x380400F0,
   };
   static const unsigned int aAscii[4] = {
     0xFFFFFFFF, 0xFC00FFFF, 0xF8000001, 0xF8000001,
@@ -204487,7 +204586,7 @@ static int geopolyUpdate(
       sqlite3_free(p);
       nChange = 1;
     }
-    for(jj=1; jj<pRtree->nAux; jj++){
+    for(jj=1; jj<nData-2; jj++){
       nChange++;
       sqlite3_bind_value(pUp, jj+2, aData[jj+2]);
     }
@@ -205090,8 +205189,9 @@ static void icuRegexpFunc(sqlite3_context *p, int nArg, sqlite3_value **apArg){
 
     if( U_SUCCESS(status) ){
       sqlite3_set_auxdata(p, 0, pExpr, icuRegexpDelete);
-    }else{
-      assert(!pExpr);
+      pExpr = sqlite3_get_auxdata(p, 0);
+    }
+    if( !pExpr ){
       icuFunctionError(p, "uregex_open", status);
       return;
     }
@@ -236979,7 +237079,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2022-07-21 15:24:47 698edb77537b67c41adc68f9b892db56bcf9a55e00371a61420f3ddd668e6603", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2022-09-29 15:55:41 a29f9949895322123f7c38fbe94c649a9d6e6c9cd0c3b41c96d694552f26b309", -1, SQLITE_TRANSIENT);
 }
 
 /*
@@ -240107,8 +240207,8 @@ static int sqlite3Fts5UnicodeCatParse(const char *zCat, u8 *aArray){
 }
 
 static const u16 aFts5UnicodeBlock[] = {
-    0,     1566,  2273,  2284,  2286,  2286,  2286,  2286,  2286,  2286,
-    2286,  2286,  2286,  2286,  2286,  2289,  2291,
+    0,     1567,  2302,  2313,  2317,  2317,  2317,  2317,  2317,  2317,
+    2317,  2317,  2317,  2317,  2317,  2320,  2322,
   };
 static const u16 aFts5UnicodeMap[] = {
     0,     32,    33,    36,    37,    40,    41,    42,    43,    44,
@@ -240157,190 +240257,193 @@ static const u16 aFts5UnicodeMap[] = {
     3142,  3146,  3157,  3160,  3165,  3168,  3170,  3174,  3191,  3192,
     3199,  3200,  3201,  3202,  3204,  3205,  3214,  3218,  3242,  3253,
     3260,  3261,  3262,  3263,  3264,  3270,  3271,  3274,  3276,  3285,
-    3293,  3296,  3298,  3302,  3313,  3328,  3330,  3332,  3342,  3346,
-    3387,  3389,  3390,  3393,  3398,  3402,  3405,  3406,  3407,  3412,
-    3415,  3416,  3423,  3426,  3430,  3440,  3449,  3450,  3457,  3458,
-    3461,  3482,  3507,  3517,  3520,  3530,  3535,  3538,  3542,  3544,
-    3558,  3570,  3572,  3585,  3633,  3634,  3636,  3647,  3648,  3654,
-    3655,  3663,  3664,  3674,  3713,  3716,  3718,  3724,  3749,  3751,
-    3761,  3762,  3764,  3773,  3776,  3782,  3784,  3792,  3804,  3840,
-    3841,  3844,  3859,  3860,  3861,  3864,  3866,  3872,  3882,  3892,
-    3893,  3894,  3895,  3896,  3897,  3898,  3899,  3900,  3901,  3902,
-    3904,  3913,  3953,  3967,  3968,  3973,  3974,  3976,  3981,  3993,
-    4030,  4038,  4039,  4046,  4048,  4053,  4057,  4096,  4139,  4141,
-    4145,  4146,  4152,  4153,  4155,  4157,  4159,  4160,  4170,  4176,
-    4182,  4184,  4186,  4190,  4193,  4194,  4197,  4199,  4206,  4209,
-    4213,  4226,  4227,  4229,  4231,  4237,  4238,  4239,  4240,  4250,
-    4253,  4254,  4256,  4295,  4301,  4304,  4347,  4348,  4349,  4352,
-    4682,  4688,  4696,  4698,  4704,  4746,  4752,  4786,  4792,  4800,
-    4802,  4808,  4824,  4882,  4888,  4957,  4960,  4969,  4992,  5008,
-    5024,  5112,  5120,  5121,  5741,  5742,  5743,  5760,  5761,  5787,
-    5788,  5792,  5867,  5870,  5873,  5888,  5906,  5909,  5919,  5938,
-    5940,  5941,  5952,  5970,  5984,  5998,  6002,  6016,  6068,  6070,
-    6071,  6078,  6086,  6087,  6089,  6100,  6103,  6104,  6107,  6108,
-    6109,  6112,  6128,  6144,  6150,  6151,  6155,  6158,  6159,  6160,
-    6176,  6211,  6212,  6272,  6277,  6279,  6313,  6314,  6320,  6400,
-    6432,  6435,  6439,  6441,  6448,  6450,  6451,  6457,  6464,  6468,
-    6470,  6480,  6512,  6528,  6576,  6608,  6618,  6622,  6656,  6679,
-    6681,  6683,  6686,  6688,  6741,  6742,  6743,  6744,  6752,  6753,
-    6754,  6755,  6757,  6765,  6771,  6783,  6784,  6800,  6816,  6823,
-    6824,  6832,  6846,  6847,  6912,  6916,  6917,  6964,  6965,  6966,
-    6971,  6972,  6973,  6978,  6979,  6981,  6992,  7002,  7009,  7019,
-    7028,  7037,  7040,  7042,  7043,  7073,  7074,  7078,  7080,  7082,
-    7083,  7086,  7088,  7098,  7142,  7143,  7144,  7146,  7149,  7150,
-    7151,  7154,  7164,  7168,  7204,  7212,  7220,  7222,  7227,  7232,
-    7245,  7248,  7258,  7288,  7294,  7296,  7312,  7357,  7360,  7376,
-    7379,  7380,  7393,  7394,  7401,  7405,  7406,  7412,  7413,  7415,
-    7416,  7418,  7424,  7468,  7531,  7544,  7545,  7579,  7616,  7680,
-    7830,  7838,  7936,  7944,  7952,  7960,  7968,  7976,  7984,  7992,
-    8000,  8008,  8016,  8025,  8027,  8029,  8031,  8033,  8040,  8048,
-    8064,  8072,  8080,  8088,  8096,  8104,  8112,  8118,  8120,  8124,
-    8125,  8126,  8127,  8130,  8134,  8136,  8140,  8141,  8144,  8150,
-    8152,  8157,  8160,  8168,  8173,  8178,  8182,  8184,  8188,  8189,
-    8192,  8203,  8208,  8214,  8216,  8217,  8218,  8219,  8221,  8222,
-    8223,  8224,  8232,  8233,  8234,  8239,  8240,  8249,  8250,  8251,
-    8255,  8257,  8260,  8261,  8262,  8263,  8274,  8275,  8276,  8277,
-    8287,  8288,  8294,  8304,  8305,  8308,  8314,  8317,  8318,  8319,
-    8320,  8330,  8333,  8334,  8336,  8352,  8400,  8413,  8417,  8418,
-    8421,  8448,  8450,  8451,  8455,  8456,  8458,  8459,  8462,  8464,
-    8467,  8468,  8469,  8470,  8472,  8473,  8478,  8484,  8485,  8486,
-    8487,  8488,  8489,  8490,  8494,  8495,  8496,  8500,  8501,  8505,
-    8506,  8508,  8510,  8512,  8517,  8519,  8522,  8523,  8524,  8526,
-    8527,  8528,  8544,  8579,  8581,  8585,  8586,  8592,  8597,  8602,
-    8604,  8608,  8609,  8611,  8612,  8614,  8615,  8622,  8623,  8654,
-    8656,  8658,  8659,  8660,  8661,  8692,  8960,  8968,  8969,  8970,
-    8971,  8972,  8992,  8994,  9001,  9002,  9003,  9084,  9085,  9115,
-    9140,  9180,  9186,  9280,  9312,  9372,  9450,  9472,  9655,  9656,
-    9665,  9666,  9720,  9728,  9839,  9840,  10088, 10089, 10090, 10091,
-    10092, 10093, 10094, 10095, 10096, 10097, 10098, 10099, 10100, 10101,
-    10102, 10132, 10176, 10181, 10182, 10183, 10214, 10215, 10216, 10217,
-    10218, 10219, 10220, 10221, 10222, 10223, 10224, 10240, 10496, 10627,
-    10628, 10629, 10630, 10631, 10632, 10633, 10634, 10635, 10636, 10637,
-    10638, 10639, 10640, 10641, 10642, 10643, 10644, 10645, 10646, 10647,
-    10648, 10649, 10712, 10713, 10714, 10715, 10716, 10748, 10749, 10750,
-    11008, 11056, 11077, 11079, 11085, 11126, 11159, 11264, 11312, 11360,
-    11363, 11365, 11367, 11374, 11377, 11378, 11380, 11381, 11383, 11388,
-    11390, 11393, 11394, 11492, 11493, 11499, 11503, 11506, 11513, 11517,
-    11518, 11520, 11559, 11565, 11568, 11631, 11632, 11647, 11648, 11680,
-    11688, 11696, 11704, 11712, 11720, 11728, 11736, 11744, 11776, 11778,
-    11779, 11780, 11781, 11782, 11785, 11786, 11787, 11788, 11789, 11790,
-    11799, 11800, 11802, 11803, 11804, 11805, 11806, 11808, 11809, 11810,
-    11811, 11812, 11813, 11814, 11815, 11816, 11817, 11818, 11823, 11824,
-    11834, 11836, 11840, 11841, 11842, 11843, 11856, 11858, 11861, 11862,
-    11863, 11864, 11865, 11866, 11867, 11868, 11869, 11904, 11931, 12032,
-    12272, 12288, 12289, 12292, 12293, 12294, 12295, 12296, 12297, 12298,
-    12299, 12300, 12301, 12302, 12303, 12304, 12305, 12306, 12308, 12309,
-    12310, 12311, 12312, 12313, 12314, 12315, 12316, 12317, 12318, 12320,
-    12321, 12330, 12334, 12336, 12337, 12342, 12344, 12347, 12348, 12349,
-    12350, 12353, 12441, 12443, 12445, 12447, 12448, 12449, 12539, 12540,
-    12543, 12549, 12593, 12688, 12690, 12694, 12704, 12736, 12784, 12800,
-    12832, 12842, 12872, 12880, 12881, 12896, 12928, 12938, 12977, 12992,
-    13312, 19903, 19904, 19968, 40959, 40981, 40982, 42128, 42192, 42232,
-    42238, 42240, 42508, 42509, 42512, 42528, 42538, 42560, 42606, 42607,
-    42608, 42611, 42612, 42622, 42623, 42624, 42652, 42654, 42656, 42726,
-    42736, 42738, 42752, 42775, 42784, 42786, 42800, 42802, 42864, 42865,
-    42873, 42878, 42888, 42889, 42891, 42895, 42896, 42900, 42902, 42923,
-    42927, 42928, 42933, 42934, 42949, 42952, 42953, 42960, 42963, 42965,
-    42966, 42994, 42997, 42999, 43000, 43002, 43003, 43010, 43011, 43014,
-    43015, 43019, 43020, 43043, 43045, 43047, 43048, 43052, 43056, 43062,
-    43064, 43065, 43072, 43124, 43136, 43138, 43188, 43204, 43214, 43216,
-    43232, 43250, 43256, 43259, 43260, 43261, 43263, 43264, 43274, 43302,
-    43310, 43312, 43335, 43346, 43359, 43360, 43392, 43395, 43396, 43443,
-    43444, 43446, 43450, 43452, 43454, 43457, 43471, 43472, 43486, 43488,
-    43493, 43494, 43495, 43504, 43514, 43520, 43561, 43567, 43569, 43571,
-    43573, 43584, 43587, 43588, 43596, 43597, 43600, 43612, 43616, 43632,
-    43633, 43639, 43642, 43643, 43644, 43645, 43646, 43696, 43697, 43698,
-    43701, 43703, 43705, 43710, 43712, 43713, 43714, 43739, 43741, 43742,
-    43744, 43755, 43756, 43758, 43760, 43762, 43763, 43765, 43766, 43777,
-    43785, 43793, 43808, 43816, 43824, 43867, 43868, 43872, 43881, 43882,
-    43888, 43968, 44003, 44005, 44006, 44008, 44009, 44011, 44012, 44013,
-    44016, 44032, 55203, 55216, 55243, 55296, 56191, 56319, 57343, 57344,
-    63743, 63744, 64112, 64256, 64275, 64285, 64286, 64287, 64297, 64298,
-    64312, 64318, 64320, 64323, 64326, 64434, 64467, 64830, 64831, 64832,
-    64848, 64914, 64975, 65008, 65020, 65021, 65024, 65040, 65047, 65048,
-    65049, 65056, 65072, 65073, 65075, 65077, 65078, 65079, 65080, 65081,
-    65082, 65083, 65084, 65085, 65086, 65087, 65088, 65089, 65090, 65091,
-    65092, 65093, 65095, 65096, 65097, 65101, 65104, 65108, 65112, 65113,
-    65114, 65115, 65116, 65117, 65118, 65119, 65122, 65123, 65124, 65128,
-    65129, 65130, 65136, 65142, 65279, 65281, 65284, 65285, 65288, 65289,
-    65290, 65291, 65292, 65293, 65294, 65296, 65306, 65308, 65311, 65313,
-    65339, 65340, 65341, 65342, 65343, 65344, 65345, 65371, 65372, 65373,
-    65374, 65375, 65376, 65377, 65378, 65379, 65380, 65382, 65392, 65393,
-    65438, 65440, 65474, 65482, 65490, 65498, 65504, 65506, 65507, 65508,
-    65509, 65512, 65513, 65517, 65529, 65532, 0,     13,    40,    60,
-    63,    80,    128,   256,   263,   311,   320,   373,   377,   394,
-    396,   400,   416,   464,   509,   640,   672,   736,   737,   768,
-    800,   813,   833,   834,   842,   848,   886,   896,   927,   928,
-    968,   976,   977,   1024,  1064,  1104,  1184,  1200,  1240,  1280,
-    1328,  1391,  1392,  1404,  1420,  1428,  1431,  1443,  1459,  1467,
-    1536,  1856,  1888,  1920,  1927,  1970,  2048,  2056,  2058,  2103,
-    2108,  2111,  2135,  2136,  2144,  2167,  2169,  2176,  2215,  2272,
-    2292,  2299,  2304,  2326,  2335,  2336,  2367,  2432,  2492,  2494,
-    2496,  2514,  2560,  2561,  2565,  2572,  2576,  2581,  2585,  2616,
-    2623,  2624,  2640,  2656,  2685,  2687,  2688,  2717,  2752,  2760,
-    2761,  2789,  2795,  2800,  2816,  2873,  2880,  2904,  2912,  2936,
-    2944,  2969,  2985,  3072,  3200,  3264,  3322,  3328,  3364,  3376,
-    3680,  3712,  3755,  3757,  3760,  3840,  3869,  3879,  3888,  3910,
-    3921,  3925,  3952,  3970,  3974,  4016,  4037,  4064,  4096,  4097,
-    4098,  4099,  4152,  4167,  4178,  4198,  4208,  4209,  4211,  4213,
-    4223,  4226,  4227,  4272,  4275,  4279,  4281,  4283,  4285,  4286,
-    4290,  4301,  4304,  4336,  4352,  4355,  4391,  4396,  4397,  4406,
-    4416,  4420,  4421,  4423,  4432,  4467,  4468,  4470,  4480,  4482,
-    4483,  4531,  4534,  4543,  4545,  4549,  4553,  4557,  4558,  4559,
-    4560,  4570,  4571,  4572,  4573,  4577,  4608,  4627,  4652,  4655,
-    4658,  4660,  4661,  4662,  4664,  4670,  4736,  4744,  4746,  4751,
-    4767,  4777,  4784,  4831,  4832,  4835,  4848,  4864,  4866,  4869,
-    4879,  4883,  4906,  4914,  4917,  4923,  4925,  4926,  4928,  4929,
-    4935,  4939,  4944,  4951,  4957,  4962,  4966,  4976,  5120,  5173,
-    5176,  5184,  5186,  5189,  5190,  5191,  5195,  5200,  5210,  5213,
-    5214,  5215,  5248,  5296,  5299,  5305,  5306,  5307,  5311,  5313,
-    5314,  5316,  5318,  5319,  5328,  5504,  5551,  5554,  5560,  5564,
-    5566,  5567,  5569,  5592,  5596,  5632,  5680,  5683,  5691,  5693,
-    5694,  5695,  5697,  5700,  5712,  5728,  5760,  5803,  5804,  5805,
-    5806,  5808,  5814,  5815,  5816,  5817,  5824,  5888,  5917,  5920,
-    5922,  5926,  5927,  5936,  5946,  5948,  5951,  5952,  6144,  6188,
-    6191,  6200,  6201,  6203,  6304,  6336,  6368,  6378,  6399,  6409,
-    6412,  6421,  6424,  6448,  6455,  6459,  6461,  6462,  6463,  6464,
-    6465,  6466,  6467,  6468,  6480,  6560,  6570,  6609,  6612,  6618,
-    6620,  6624,  6625,  6626,  6627,  6628,  6656,  6657,  6667,  6707,
-    6713,  6714,  6715,  6719,  6727,  6736,  6737,  6743,  6745,  6748,
-    6794,  6807,  6808,  6810,  6813,  6814,  6832,  7168,  7178,  7215,
-    7216,  7224,  7230,  7231,  7232,  7233,  7248,  7258,  7280,  7282,
-    7314,  7337,  7338,  7345,  7346,  7348,  7349,  7424,  7432,  7435,
-    7473,  7482,  7484,  7487,  7494,  7495,  7504,  7520,  7527,  7530,
-    7562,  7568,  7571,  7573,  7574,  7575,  7576,  7584,  7904,  7923,
-    7925,  7927,  8112,  8128,  8149,  8157,  8161,  8191,  8192,  9216,
-    9328,  9344,  12176, 12273, 12288, 13360, 17408, 26624, 27200, 27232,
-    27246, 27248, 27328, 27344, 27376, 27381, 27392, 27440, 27447, 27452,
-    27456, 27460, 27461, 27472, 27483, 27491, 27517, 28224, 28256, 28288,
-    28311, 28416, 28495, 28496, 28497, 28559, 28563, 28640, 28642, 28643,
-    28644, 28656, 28672, 34807, 34816, 36096, 36104, 45040, 45045, 45053,
-    45056, 45392, 45412, 45424, 48128, 48240, 48256, 48272, 48284, 48285,
-    48287, 48288, 52992, 53040, 53072, 53248, 53504, 53545, 53605, 53607,
-    53610, 53613, 53619, 53627, 53635, 53637, 53644, 53674, 53678, 53760,
-    53826, 53829, 53984, 54016, 54112, 54272, 54298, 54324, 54350, 54358,
-    54376, 54402, 54428, 54430, 54434, 54437, 54441, 54446, 54454, 54459,
-    54461, 54469, 54480, 54506, 54532, 54535, 54541, 54550, 54558, 54584,
-    54587, 54592, 54598, 54602, 54610, 54636, 54662, 54688, 54714, 54740,
-    54766, 54792, 54818, 54844, 54870, 54896, 54922, 54952, 54977, 54978,
-    55003, 55004, 55010, 55035, 55036, 55061, 55062, 55068, 55093, 55094,
-    55119, 55120, 55126, 55151, 55152, 55177, 55178, 55184, 55209, 55210,
-    55235, 55236, 55242, 55246, 55296, 55808, 55863, 55867, 55917, 55925,
-    55926, 55940, 55941, 55943, 55963, 55969, 57088, 57098, 57099, 57344,
-    57352, 57371, 57379, 57382, 57600, 57648, 57655, 57664, 57678, 57679,
-    58000, 58030, 58048, 58092, 58096, 58111, 59360, 59368, 59373, 59376,
-    59392, 59591, 59600, 59648, 59682, 59716, 59723, 59728, 59742, 60529,
-    60588, 60589, 60592, 60593, 60673, 60718, 60719, 60928, 60933, 60961,
-    60964, 60967, 60969, 60980, 60985, 60987, 60994, 60999, 61001, 61003,
-    61005, 61009, 61012, 61015, 61017, 61019, 61021, 61023, 61025, 61028,
-    61031, 61036, 61044, 61049, 61054, 61056, 61067, 61089, 61093, 61099,
-    61168, 61440, 61488, 61600, 61617, 61633, 61649, 61696, 61709, 61926,
-    61968, 62016, 62032, 62048, 62208, 62459, 62464, 63197, 63216, 63232,
-    63360, 63456, 63472, 63488, 63504, 63568, 63584, 63632, 63664, 63744,
-    64096, 64112, 64120, 64128, 64144, 64176, 64192, 64208, 64224, 64240,
-    64256, 64404, 64496, 0,     42719, 42752, 46904, 46912, 47133, 47136,
-    52897, 52912, 60384, 63488, 0,     4938,  1,     32,    256,   0,
-    65533,
+    3293,  3296,  3298,  3302,  3313,  3315,  3328,  3330,  3332,  3342,
+    3346,  3387,  3389,  3390,  3393,  3398,  3402,  3405,  3406,  3407,
+    3412,  3415,  3416,  3423,  3426,  3430,  3440,  3449,  3450,  3457,
+    3458,  3461,  3482,  3507,  3517,  3520,  3530,  3535,  3538,  3542,
+    3544,  3558,  3570,  3572,  3585,  3633,  3634,  3636,  3647,  3648,
+    3654,  3655,  3663,  3664,  3674,  3713,  3716,  3718,  3724,  3749,
+    3751,  3761,  3762,  3764,  3773,  3776,  3782,  3784,  3792,  3804,
+    3840,  3841,  3844,  3859,  3860,  3861,  3864,  3866,  3872,  3882,
+    3892,  3893,  3894,  3895,  3896,  3897,  3898,  3899,  3900,  3901,
+    3902,  3904,  3913,  3953,  3967,  3968,  3973,  3974,  3976,  3981,
+    3993,  4030,  4038,  4039,  4046,  4048,  4053,  4057,  4096,  4139,
+    4141,  4145,  4146,  4152,  4153,  4155,  4157,  4159,  4160,  4170,
+    4176,  4182,  4184,  4186,  4190,  4193,  4194,  4197,  4199,  4206,
+    4209,  4213,  4226,  4227,  4229,  4231,  4237,  4238,  4239,  4240,
+    4250,  4253,  4254,  4256,  4295,  4301,  4304,  4347,  4348,  4349,
+    4352,  4682,  4688,  4696,  4698,  4704,  4746,  4752,  4786,  4792,
+    4800,  4802,  4808,  4824,  4882,  4888,  4957,  4960,  4969,  4992,
+    5008,  5024,  5112,  5120,  5121,  5741,  5742,  5743,  5760,  5761,
+    5787,  5788,  5792,  5867,  5870,  5873,  5888,  5906,  5909,  5919,
+    5938,  5940,  5941,  5952,  5970,  5984,  5998,  6002,  6016,  6068,
+    6070,  6071,  6078,  6086,  6087,  6089,  6100,  6103,  6104,  6107,
+    6108,  6109,  6112,  6128,  6144,  6150,  6151,  6155,  6158,  6159,
+    6160,  6176,  6211,  6212,  6272,  6277,  6279,  6313,  6314,  6320,
+    6400,  6432,  6435,  6439,  6441,  6448,  6450,  6451,  6457,  6464,
+    6468,  6470,  6480,  6512,  6528,  6576,  6608,  6618,  6622,  6656,
+    6679,  6681,  6683,  6686,  6688,  6741,  6742,  6743,  6744,  6752,
+    6753,  6754,  6755,  6757,  6765,  6771,  6783,  6784,  6800,  6816,
+    6823,  6824,  6832,  6846,  6847,  6912,  6916,  6917,  6964,  6965,
+    6966,  6971,  6972,  6973,  6978,  6979,  6981,  6992,  7002,  7009,
+    7019,  7028,  7037,  7040,  7042,  7043,  7073,  7074,  7078,  7080,
+    7082,  7083,  7086,  7088,  7098,  7142,  7143,  7144,  7146,  7149,
+    7150,  7151,  7154,  7164,  7168,  7204,  7212,  7220,  7222,  7227,
+    7232,  7245,  7248,  7258,  7288,  7294,  7296,  7312,  7357,  7360,
+    7376,  7379,  7380,  7393,  7394,  7401,  7405,  7406,  7412,  7413,
+    7415,  7416,  7418,  7424,  7468,  7531,  7544,  7545,  7579,  7616,
+    7680,  7830,  7838,  7936,  7944,  7952,  7960,  7968,  7976,  7984,
+    7992,  8000,  8008,  8016,  8025,  8027,  8029,  8031,  8033,  8040,
+    8048,  8064,  8072,  8080,  8088,  8096,  8104,  8112,  8118,  8120,
+    8124,  8125,  8126,  8127,  8130,  8134,  8136,  8140,  8141,  8144,
+    8150,  8152,  8157,  8160,  8168,  8173,  8178,  8182,  8184,  8188,
+    8189,  8192,  8203,  8208,  8214,  8216,  8217,  8218,  8219,  8221,
+    8222,  8223,  8224,  8232,  8233,  8234,  8239,  8240,  8249,  8250,
+    8251,  8255,  8257,  8260,  8261,  8262,  8263,  8274,  8275,  8276,
+    8277,  8287,  8288,  8294,  8304,  8305,  8308,  8314,  8317,  8318,
+    8319,  8320,  8330,  8333,  8334,  8336,  8352,  8400,  8413,  8417,
+    8418,  8421,  8448,  8450,  8451,  8455,  8456,  8458,  8459,  8462,
+    8464,  8467,  8468,  8469,  8470,  8472,  8473,  8478,  8484,  8485,
+    8486,  8487,  8488,  8489,  8490,  8494,  8495,  8496,  8500,  8501,
+    8505,  8506,  8508,  8510,  8512,  8517,  8519,  8522,  8523,  8524,
+    8526,  8527,  8528,  8544,  8579,  8581,  8585,  8586,  8592,  8597,
+    8602,  8604,  8608,  8609,  8611,  8612,  8614,  8615,  8622,  8623,
+    8654,  8656,  8658,  8659,  8660,  8661,  8692,  8960,  8968,  8969,
+    8970,  8971,  8972,  8992,  8994,  9001,  9002,  9003,  9084,  9085,
+    9115,  9140,  9180,  9186,  9280,  9312,  9372,  9450,  9472,  9655,
+    9656,  9665,  9666,  9720,  9728,  9839,  9840,  10088, 10089, 10090,
+    10091, 10092, 10093, 10094, 10095, 10096, 10097, 10098, 10099, 10100,
+    10101, 10102, 10132, 10176, 10181, 10182, 10183, 10214, 10215, 10216,
+    10217, 10218, 10219, 10220, 10221, 10222, 10223, 10224, 10240, 10496,
+    10627, 10628, 10629, 10630, 10631, 10632, 10633, 10634, 10635, 10636,
+    10637, 10638, 10639, 10640, 10641, 10642, 10643, 10644, 10645, 10646,
+    10647, 10648, 10649, 10712, 10713, 10714, 10715, 10716, 10748, 10749,
+    10750, 11008, 11056, 11077, 11079, 11085, 11126, 11159, 11264, 11312,
+    11360, 11363, 11365, 11367, 11374, 11377, 11378, 11380, 11381, 11383,
+    11388, 11390, 11393, 11394, 11492, 11493, 11499, 11503, 11506, 11513,
+    11517, 11518, 11520, 11559, 11565, 11568, 11631, 11632, 11647, 11648,
+    11680, 11688, 11696, 11704, 11712, 11720, 11728, 11736, 11744, 11776,
+    11778, 11779, 11780, 11781, 11782, 11785, 11786, 11787, 11788, 11789,
+    11790, 11799, 11800, 11802, 11803, 11804, 11805, 11806, 11808, 11809,
+    11810, 11811, 11812, 11813, 11814, 11815, 11816, 11817, 11818, 11823,
+    11824, 11834, 11836, 11840, 11841, 11842, 11843, 11856, 11858, 11861,
+    11862, 11863, 11864, 11865, 11866, 11867, 11868, 11869, 11904, 11931,
+    12032, 12272, 12288, 12289, 12292, 12293, 12294, 12295, 12296, 12297,
+    12298, 12299, 12300, 12301, 12302, 12303, 12304, 12305, 12306, 12308,
+    12309, 12310, 12311, 12312, 12313, 12314, 12315, 12316, 12317, 12318,
+    12320, 12321, 12330, 12334, 12336, 12337, 12342, 12344, 12347, 12348,
+    12349, 12350, 12353, 12441, 12443, 12445, 12447, 12448, 12449, 12539,
+    12540, 12543, 12549, 12593, 12688, 12690, 12694, 12704, 12736, 12784,
+    12800, 12832, 12842, 12872, 12880, 12881, 12896, 12928, 12938, 12977,
+    12992, 13312, 19903, 19904, 19968, 40959, 40981, 40982, 42128, 42192,
+    42232, 42238, 42240, 42508, 42509, 42512, 42528, 42538, 42560, 42606,
+    42607, 42608, 42611, 42612, 42622, 42623, 42624, 42652, 42654, 42656,
+    42726, 42736, 42738, 42752, 42775, 42784, 42786, 42800, 42802, 42864,
+    42865, 42873, 42878, 42888, 42889, 42891, 42895, 42896, 42900, 42902,
+    42923, 42927, 42928, 42933, 42934, 42949, 42952, 42953, 42960, 42963,
+    42965, 42966, 42994, 42997, 42999, 43000, 43002, 43003, 43010, 43011,
+    43014, 43015, 43019, 43020, 43043, 43045, 43047, 43048, 43052, 43056,
+    43062, 43064, 43065, 43072, 43124, 43136, 43138, 43188, 43204, 43214,
+    43216, 43232, 43250, 43256, 43259, 43260, 43261, 43263, 43264, 43274,
+    43302, 43310, 43312, 43335, 43346, 43359, 43360, 43392, 43395, 43396,
+    43443, 43444, 43446, 43450, 43452, 43454, 43457, 43471, 43472, 43486,
+    43488, 43493, 43494, 43495, 43504, 43514, 43520, 43561, 43567, 43569,
+    43571, 43573, 43584, 43587, 43588, 43596, 43597, 43600, 43612, 43616,
+    43632, 43633, 43639, 43642, 43643, 43644, 43645, 43646, 43696, 43697,
+    43698, 43701, 43703, 43705, 43710, 43712, 43713, 43714, 43739, 43741,
+    43742, 43744, 43755, 43756, 43758, 43760, 43762, 43763, 43765, 43766,
+    43777, 43785, 43793, 43808, 43816, 43824, 43867, 43868, 43872, 43881,
+    43882, 43888, 43968, 44003, 44005, 44006, 44008, 44009, 44011, 44012,
+    44013, 44016, 44032, 55203, 55216, 55243, 55296, 56191, 56319, 57343,
+    57344, 63743, 63744, 64112, 64256, 64275, 64285, 64286, 64287, 64297,
+    64298, 64312, 64318, 64320, 64323, 64326, 64434, 64467, 64830, 64831,
+    64832, 64848, 64914, 64975, 65008, 65020, 65021, 65024, 65040, 65047,
+    65048, 65049, 65056, 65072, 65073, 65075, 65077, 65078, 65079, 65080,
+    65081, 65082, 65083, 65084, 65085, 65086, 65087, 65088, 65089, 65090,
+    65091, 65092, 65093, 65095, 65096, 65097, 65101, 65104, 65108, 65112,
+    65113, 65114, 65115, 65116, 65117, 65118, 65119, 65122, 65123, 65124,
+    65128, 65129, 65130, 65136, 65142, 65279, 65281, 65284, 65285, 65288,
+    65289, 65290, 65291, 65292, 65293, 65294, 65296, 65306, 65308, 65311,
+    65313, 65339, 65340, 65341, 65342, 65343, 65344, 65345, 65371, 65372,
+    65373, 65374, 65375, 65376, 65377, 65378, 65379, 65380, 65382, 65392,
+    65393, 65438, 65440, 65474, 65482, 65490, 65498, 65504, 65506, 65507,
+    65508, 65509, 65512, 65513, 65517, 65529, 65532, 0,     13,    40,
+    60,    63,    80,    128,   256,   263,   311,   320,   373,   377,
+    394,   396,   400,   416,   464,   509,   640,   672,   736,   737,
+    768,   800,   813,   833,   834,   842,   848,   886,   896,   927,
+    928,   968,   976,   977,   1024,  1064,  1104,  1184,  1200,  1240,
+    1280,  1328,  1391,  1392,  1404,  1420,  1428,  1431,  1443,  1459,
+    1467,  1536,  1856,  1888,  1920,  1927,  1970,  2048,  2056,  2058,
+    2103,  2108,  2111,  2135,  2136,  2144,  2167,  2169,  2176,  2215,
+    2272,  2292,  2299,  2304,  2326,  2335,  2336,  2367,  2432,  2492,
+    2494,  2496,  2514,  2560,  2561,  2565,  2572,  2576,  2581,  2585,
+    2616,  2623,  2624,  2640,  2656,  2685,  2687,  2688,  2717,  2752,
+    2760,  2761,  2789,  2795,  2800,  2816,  2873,  2880,  2904,  2912,
+    2936,  2944,  2969,  2985,  3072,  3200,  3264,  3322,  3328,  3364,
+    3376,  3680,  3712,  3755,  3757,  3760,  3837,  3840,  3869,  3879,
+    3888,  3910,  3921,  3925,  3952,  3970,  3974,  4016,  4037,  4064,
+    4096,  4097,  4098,  4099,  4152,  4167,  4178,  4198,  4208,  4209,
+    4211,  4213,  4223,  4226,  4227,  4272,  4275,  4279,  4281,  4283,
+    4285,  4286,  4290,  4301,  4304,  4336,  4352,  4355,  4391,  4396,
+    4397,  4406,  4416,  4420,  4421,  4423,  4432,  4467,  4468,  4470,
+    4480,  4482,  4483,  4531,  4534,  4543,  4545,  4549,  4553,  4557,
+    4558,  4559,  4560,  4570,  4571,  4572,  4573,  4577,  4608,  4627,
+    4652,  4655,  4658,  4660,  4661,  4662,  4664,  4670,  4671,  4673,
+    4736,  4744,  4746,  4751,  4767,  4777,  4784,  4831,  4832,  4835,
+    4848,  4864,  4866,  4869,  4879,  4883,  4906,  4914,  4917,  4923,
+    4925,  4926,  4928,  4929,  4935,  4939,  4944,  4951,  4957,  4962,
+    4966,  4976,  5120,  5173,  5176,  5184,  5186,  5189,  5190,  5191,
+    5195,  5200,  5210,  5213,  5214,  5215,  5248,  5296,  5299,  5305,
+    5306,  5307,  5311,  5313,  5314,  5316,  5318,  5319,  5328,  5504,
+    5551,  5554,  5560,  5564,  5566,  5567,  5569,  5592,  5596,  5632,
+    5680,  5683,  5691,  5693,  5694,  5695,  5697,  5700,  5712,  5728,
+    5760,  5803,  5804,  5805,  5806,  5808,  5814,  5815,  5816,  5817,
+    5824,  5888,  5917,  5920,  5922,  5926,  5927,  5936,  5946,  5948,
+    5951,  5952,  6144,  6188,  6191,  6200,  6201,  6203,  6304,  6336,
+    6368,  6378,  6399,  6409,  6412,  6421,  6424,  6448,  6455,  6459,
+    6461,  6462,  6463,  6464,  6465,  6466,  6467,  6468,  6480,  6560,
+    6570,  6609,  6612,  6618,  6620,  6624,  6625,  6626,  6627,  6628,
+    6656,  6657,  6667,  6707,  6713,  6714,  6715,  6719,  6727,  6736,
+    6737,  6743,  6745,  6748,  6794,  6807,  6808,  6810,  6813,  6814,
+    6832,  6912,  7168,  7178,  7215,  7216,  7224,  7230,  7231,  7232,
+    7233,  7248,  7258,  7280,  7282,  7314,  7337,  7338,  7345,  7346,
+    7348,  7349,  7424,  7432,  7435,  7473,  7482,  7484,  7487,  7494,
+    7495,  7504,  7520,  7527,  7530,  7562,  7568,  7571,  7573,  7574,
+    7575,  7576,  7584,  7904,  7923,  7925,  7927,  7936,  7938,  7939,
+    7940,  7954,  7988,  7990,  7998,  8000,  8001,  8002,  8003,  8016,
+    8112,  8128,  8149,  8157,  8161,  8191,  8192,  9216,  9328,  9344,
+    12176, 12273, 12288, 13360, 13376, 13377, 13383, 17408, 26624, 27200,
+    27232, 27246, 27248, 27328, 27344, 27376, 27381, 27392, 27440, 27447,
+    27452, 27456, 27460, 27461, 27472, 27483, 27491, 27517, 28224, 28256,
+    28288, 28311, 28416, 28495, 28496, 28497, 28559, 28563, 28640, 28642,
+    28643, 28644, 28656, 28672, 34807, 34816, 36096, 36104, 45040, 45045,
+    45053, 45056, 45362, 45392, 45397, 45412, 45424, 48128, 48240, 48256,
+    48272, 48284, 48285, 48287, 48288, 52992, 53040, 53072, 53248, 53504,
+    53545, 53605, 53607, 53610, 53613, 53619, 53627, 53635, 53637, 53644,
+    53674, 53678, 53760, 53826, 53829, 53952, 53984, 54016, 54112, 54272,
+    54298, 54324, 54350, 54358, 54376, 54402, 54428, 54430, 54434, 54437,
+    54441, 54446, 54454, 54459, 54461, 54469, 54480, 54506, 54532, 54535,
+    54541, 54550, 54558, 54584, 54587, 54592, 54598, 54602, 54610, 54636,
+    54662, 54688, 54714, 54740, 54766, 54792, 54818, 54844, 54870, 54896,
+    54922, 54952, 54977, 54978, 55003, 55004, 55010, 55035, 55036, 55061,
+    55062, 55068, 55093, 55094, 55119, 55120, 55126, 55151, 55152, 55177,
+    55178, 55184, 55209, 55210, 55235, 55236, 55242, 55246, 55296, 55808,
+    55863, 55867, 55917, 55925, 55926, 55940, 55941, 55943, 55963, 55969,
+    57088, 57098, 57099, 57125, 57344, 57352, 57371, 57379, 57382, 57392,
+    57487, 57600, 57648, 57655, 57664, 57678, 57679, 58000, 58030, 58048,
+    58092, 58096, 58111, 58576, 58603, 58604, 58608, 59360, 59368, 59373,
+    59376, 59392, 59591, 59600, 59648, 59682, 59716, 59723, 59728, 59742,
+    60529, 60588, 60589, 60592, 60593, 60673, 60718, 60719, 60928, 60933,
+    60961, 60964, 60967, 60969, 60980, 60985, 60987, 60994, 60999, 61001,
+    61003, 61005, 61009, 61012, 61015, 61017, 61019, 61021, 61023, 61025,
+    61028, 61031, 61036, 61044, 61049, 61054, 61056, 61067, 61089, 61093,
+    61099, 61168, 61440, 61488, 61600, 61617, 61633, 61649, 61696, 61709,
+    61926, 61968, 62016, 62032, 62048, 62208, 62459, 62464, 63196, 63216,
+    63232, 63355, 63456, 63472, 63488, 63504, 63568, 63584, 63632, 63664,
+    63744, 64096, 64112, 64128, 64144, 64191, 64206, 64224, 64240, 64256,
+    64404, 64496, 0,     42719, 42752, 46905, 46912, 47133, 47136, 52897,
+    52912, 60384, 63488, 0,     4938,  4944,  9135,  1,     32,    256,
+    0,     65533,
   };
 static const u16 aFts5UnicodeData[] = {
     1025,  61,    117,   55,    117,   54,    50,    53,    57,    53,
@@ -240389,190 +240492,193 @@ static const u16 aFts5UnicodeData[] = {
     108,   140,   76,    103,   39,    71,    76,    333,   53,    239,
     58,    39,    44,    74,    53,    263,   103,   743,   327,   167,
     44,    39,    42,    44,    170,   44,    74,    74,    76,    74,
-    71,    71,    76,    333,   71,    76,    74,    295,   103,   1319,
-    76,    39,    106,   140,   106,   106,   44,    39,    58,    103,
-    42,    239,   103,   76,    333,   303,   58,    199,   44,    74,
-    583,   775,   295,   39,    231,   44,    106,   108,   44,    266,
-    333,   74,    53,    1543,  44,    71,    236,   55,    199,   38,
-    268,   53,    333,   85,    71,    39,    167,   775,   39,    327,
-    44,    71,    300,   39,    167,   38,    204,   333,   135,   39,
-    122,   501,   58,    53,    122,   76,    218,   333,   335,   58,
-    44,    58,    44,    58,    44,    54,    50,    54,    50,    74,
-    263,   1159,  460,   42,    172,   53,    76,    167,   364,   1164,
-    282,   44,    218,   90,    181,   154,   85,    1383,  74,    140,
-    42,    204,   42,    76,    74,    76,    39,    333,   213,   199,
-    74,    76,    135,   108,   39,    106,   71,    234,   103,   140,
-    423,   44,    74,    76,    202,   44,    39,    42,    333,   106,
-    44,    90,    1225,  41,    41,    1381,  53,    38,    101,   10535,
-    135,   231,   39,    135,   1319,  135,   1063,  135,   231,   39,
-    135,   487,   1831,  135,   2151,  108,   309,   655,   519,   346,
-    2761,  197,   49,    19847, 58,    53,    551,   61,    839,   54,
-    50,    2407,  117,   110,   263,   583,   108,   42,    615,   76,
-    42,    85,    583,   76,    423,   103,   76,    1671,  76,    42,
-    236,   266,   44,    74,    364,   117,   38,    117,   55,    39,
-    44,    333,   335,   213,   49,    149,   108,   34,    44,    333,
-    1127,  38,    1703,  167,   76,    1095,  44,    39,    2247,  999,
-    108,   138,   76,    106,   74,    44,    202,   108,   58,    85,
-    333,   967,   167,   1415,  839,   333,   47,    1114,  743,   76,
-    74,    44,    85,    1703,  42,    44,    42,    236,   44,    42,
-    44,    74,    268,   202,   332,   44,    333,   333,   245,   38,
-    213,   460,   43,    524,   140,   42,    1511,  44,    42,    172,
-    42,    44,    170,   44,    74,    263,   333,   245,   346,   300,
-    314,   85,    76,    42,    967,   42,    140,   74,    76,    42,
-    108,   71,    333,   1415,  44,    42,    76,    106,   44,    42,
-    108,   74,    149,   1159,  266,   268,   74,    76,    181,   333,
-    103,   333,   967,   198,   85,    293,   1385,  105,   277,   108,
-    53,    428,   42,    236,   135,   44,    199,   44,    71,    42,
-    76,    39,    1413,  2022,  421,   38,    1093,  1190,  2060,  4830,
-    261,   3166,  261,   265,   197,   201,   261,   265,   261,   265,
-    197,   201,   261,   41,    41,    41,    94,    229,   265,   453,
-    261,   264,   261,   264,   261,   264,   165,   69,    137,   40,
-    56,    37,    120,   101,   69,    137,   40,    120,   133,   69,
-    137,   120,   261,   169,   120,   101,   69,    137,   40,    88,
-    381,   162,   209,   85,    52,    51,    54,    84,    51,    54,
-    52,    277,   59,    60,    162,   61,    309,   52,    51,    149,
-    80,    117,   57,    54,    50,    373,   57,    53,    48,    341,
-    61,    162,   322,   47,    38,    207,   121,   54,    50,    38,
-    335,   121,   54,    50,    422,   1079,  428,   139,   44,    107,
-    396,   90,    41,    154,   41,    90,    37,    105,   69,    105,
-    37,    58,    41,    90,    57,    169,   218,   41,    58,    41,
-    58,    41,    58,    137,   58,    37,    137,   37,    135,   37,
-    90,    69,    73,    185,   94,    101,   58,    57,    90,    37,
-    58,    527,   1134,  94,    142,   47,    90,    185,   186,   89,
-    154,   57,    90,    57,    90,    57,    250,   57,    1018,  89,
-    90,    57,    58,    57,    1018,  8601,  282,   54,    50,    54,
-    50,    666,   89,    250,   54,    50,    2618,  57,    986,   825,
-    1306,  217,   2234,  378,   1935,  2522,  719,   5882,  57,    314,
-    57,    1754,  281,   3578,  57,    7962,  54,    50,    54,    50,
+    71,    71,    76,    333,   71,    42,    76,    74,    295,   103,
+    1319,  76,    39,    106,   140,   106,   106,   44,    39,    58,
+    103,   42,    239,   103,   76,    333,   303,   58,    199,   44,
+    74,    583,   775,   295,   39,    231,   44,    106,   108,   44,
+    266,   333,   74,    53,    1543,  44,    71,    236,   55,    199,
+    38,    268,   53,    333,   85,    71,    39,    167,   775,   39,
+    327,   44,    71,    300,   39,    167,   38,    236,   333,   135,
+    39,    122,   501,   58,    53,    122,   76,    218,   333,   335,
+    58,    44,    58,    44,    58,    44,    54,    50,    54,    50,
+    74,    263,   1159,  460,   42,    172,   53,    76,    167,   364,
+    1164,  282,   44,    218,   90,    181,   154,   85,    1383,  74,
+    140,   42,    204,   42,    76,    74,    76,    39,    333,   213,
+    199,   74,    76,    135,   108,   39,    106,   71,    234,   103,
+    140,   423,   44,    74,    76,    202,   44,    39,    42,    333,
+    106,   44,    90,    1225,  41,    41,    1381,  53,    38,    101,
+    10535, 135,   231,   39,    135,   1319,  135,   1063,  135,   231,
+    39,    135,   487,   1831,  135,   2151,  108,   309,   655,   519,
+    346,   2761,  197,   49,    19847, 58,    53,    551,   61,    839,
+    54,    50,    2407,  117,   110,   263,   583,   108,   42,    615,
+    76,    42,    85,    583,   76,    423,   103,   76,    1671,  76,
+    42,    236,   266,   44,    74,    364,   117,   38,    117,   55,
+    39,    44,    333,   335,   213,   49,    149,   108,   34,    44,
+    333,   1127,  38,    1703,  167,   76,    1095,  44,    39,    2247,
+    999,   108,   138,   76,    106,   74,    44,    202,   108,   58,
+    85,    333,   967,   167,   1415,  839,   333,   47,    1114,  743,
+    76,    74,    44,    85,    1703,  42,    44,    42,    236,   44,
+    42,    44,    74,    268,   202,   332,   44,    333,   333,   245,
+    38,    213,   460,   43,    524,   140,   42,    1511,  44,    42,
+    172,   42,    44,    170,   44,    74,    263,   333,   245,   346,
+    300,   314,   85,    76,    42,    967,   42,    140,   74,    76,
+    42,    108,   71,    333,   1415,  44,    42,    76,    106,   44,
+    42,    108,   74,    149,   1159,  266,   268,   74,    76,    181,
+    333,   103,   333,   967,   198,   85,    293,   1385,  105,   277,
+    108,   53,    428,   42,    236,   135,   44,    199,   44,    71,
+    42,    76,    39,    1413,  2022,  421,   38,    1093,  1190,  2060,
+    4830,  261,   3166,  261,   265,   197,   201,   261,   265,   261,
+    265,   197,   201,   261,   41,    41,    41,    94,    229,   265,
+    453,   261,   264,   261,   264,   261,   264,   165,   69,    137,
+    40,    56,    37,    120,   101,   69,    137,   40,    120,   133,
+    69,    137,   120,   261,   169,   120,   101,   69,    137,   40,
+    88,    381,   162,   209,   85,    52,    51,    54,    84,    51,
+    54,    52,    277,   59,    60,    162,   61,    309,   52,    51,
+    149,   80,    117,   57,    54,    50,    373,   57,    53,    48,
+    341,   61,    162,   322,   47,    38,    207,   121,   54,    50,
+    38,    335,   121,   54,    50,    422,   1079,  428,   139,   44,
+    107,   396,   90,    41,    154,   41,    90,    37,    105,   69,
+    105,   37,    58,    41,    90,    57,    169,   218,   41,    58,
+    41,    58,    41,    58,    137,   58,    37,    137,   37,    135,
+    37,    90,    69,    73,    185,   94,    101,   58,    57,    90,
+    37,    58,    527,   1134,  94,    142,   47,    90,    185,   186,
+    89,    154,   57,    90,    57,    90,    57,    250,   57,    1018,
+    89,    90,    57,    58,    57,    1018,  8601,  282,   54,    50,
+    54,    50,    666,   89,    250,   54,    50,    2618,  57,    986,
+    825,   1306,  217,   2234,  378,   1935,  2522,  719,   5882,  57,
+    314,   57,    1754,  281,   3578,  57,    7962,  54,    50,    54,
+    50,    54,    50,    54,    50,    54,    50,    54,    50,    54,
+    50,    975,   1434,  185,   54,    50,    1017,  54,    50,    54,
+    50,    54,    50,    54,    50,    54,    50,    537,   8218,  4217,
     54,    50,    54,    50,    54,    50,    54,    50,    54,    50,
-    975,   1434,  185,   54,    50,    1017,  54,    50,    54,    50,
-    54,    50,    54,    50,    54,    50,    537,   8218,  4217,  54,
-    50,    54,    50,    54,    50,    54,    50,    54,    50,    54,
-    50,    54,    50,    54,    50,    54,    50,    54,    50,    54,
-    50,    2041,  54,    50,    54,    50,    1049,  54,    50,    8281,
-    1562,  697,   90,    217,   1274,  1050,  3386,  1545,  1541,  126,
-    73,    69,    254,   105,   37,    94,    37,    94,    165,   70,
-    105,   37,    3166,  37,    218,   158,   108,   94,    149,   47,
-    85,    1221,  37,    37,    1799,  38,    53,    44,    743,   231,
-    231,   231,   231,   231,   231,   231,   231,   1036,  85,    52,
-    51,    52,    51,    117,   52,    51,    53,    52,    51,    309,
-    49,    85,    49,    53,    52,    51,    85,    52,    51,    54,
-    50,    54,    50,    54,    50,    54,    50,    181,   38,    341,
-    81,    149,   49,    53,    54,    437,   90,    117,   54,    50,
-    54,    50,    54,    50,    54,    50,    49,    858,   2874,  6874,
-    410,   61,    117,   58,    38,    39,    46,    54,    50,    54,
-    50,    54,    50,    54,    50,    54,    50,    90,    54,    50,
-    54,    50,    54,    50,    54,    50,    49,    54,    82,    58,
-    302,   140,   74,    49,    166,   90,    110,   38,    39,    53,
-    90,    2759,  76,    88,    70,    39,    49,    2887,  53,    102,
-    39,    1383,  3015,  90,    143,   346,   1031,  1178,  519,   1018,
-    335,   986,   271,   58,    495,   1050,  335,   1274,  495,   10266,
-    39,    39,    2074,  39,    711,   38,    36583, 1786,  1287,  198,
-    85,    8583,  38,    117,   519,   333,   71,    1502,  39,    44,
-    107,   53,    332,   53,    38,    926,   70,    76,    2247,  334,
-    76,    213,   760,   294,   88,    478,   69,    2014,  38,    261,
-    190,   350,   38,    88,    158,   39,    158,   69,    702,   137,
-    37,    169,   37,    510,   105,   37,    94,    94,    37,    37,
-    158,   102,   94,    39,    70,    37,    231,   44,    103,   44,
-    135,   44,    743,   74,    76,    42,    154,   44,    207,   90,
-    55,    58,    1671,  149,   74,    1607,  522,   76,    85,    333,
-    588,   199,   117,   39,    53,    71,    44,    333,   903,   268,
-    85,    743,   364,   74,    53,    935,   108,   42,    1511,  44,
-    74,    140,   74,    76,    106,   437,   38,    333,   85,    167,
-    44,    38,    295,   333,   167,   1319,  204,   74,    76,    74,
-    76,    103,   44,    263,   44,    42,    333,   149,   519,   38,
-    199,   122,   39,    42,    44,    42,    1607,  44,    39,    108,
-    71,    76,    167,   76,    39,    44,    39,    71,    38,    85,
-    359,   42,    76,    74,    85,    39,    70,    42,    44,    199,
-    199,   199,   231,   231,   1381,  56,    134,   293,   38,    88,
-    2565,  1127,  74,    44,    74,    44,    74,    53,    42,    44,
-    333,   39,    39,    743,   1575,  36,    68,    68,    36,    63,
-    63,    11719, 3399,  229,   165,   39,    44,    327,   57,    423,
-    167,   39,    71,    71,    3463,  568,   11623, 50,    54,    538,
-    2055,  1735,  58,    391,   55,    122,   524,   245,   54,    50,
-    53,    524,   53,    81,    80,    54,    50,    54,    50,    54,
-    50,    54,    50,    54,    50,    54,    50,    54,    50,    54,
-    50,    85,    54,    50,    149,   112,   117,   149,   49,    54,
-    50,    54,    50,    54,    50,    117,   57,    49,    121,   53,
-    55,    85,    167,   4327,  34,    117,   55,    117,   54,    50,
-    53,    57,    53,    49,    85,    333,   85,    121,   85,    841,
-    54,    53,    50,    56,    48,    56,    837,   54,    57,    50,
-    57,    54,    50,    53,    54,    50,    85,    327,   38,    1447,
-    70,    999,   199,   199,   199,   103,   87,    57,    56,    58,
-    87,    58,    153,   90,    98,    90,    391,   839,   615,   71,
-    487,   455,   3943,  117,   1455,  314,   1710,  143,   570,   79,
-    122,   442,   58,    1466,  44,    935,   1575,  44,    879,   1031,
-    143,   647,   46,    263,   46,    1223,  172,   967,   53,    1159,
-    263,   53,    174,   1289,  1285,  2503,  333,   1161,  1157,  1287,
-    1671,  53,    361,   489,   233,   73,    357,   485,   229,   69,
-    9959,  711,   263,   198,   1350,  294,   199,   39,    1415,  71,
-    39,    743,   53,    271,   743,   90,    239,   999,   303,   615,
-    71,    175,   711,   207,   53,    839,   53,    1799,  79,    71,
-    527,   1487,  39,    108,   76,    140,   135,   103,   935,   108,
-    44,    303,   309,   935,   79,    53,    935,   111,   263,   58,
-    903,   76,    175,   245,   1735,  245,   711,   271,   615,   271,
-    583,   149,   239,   2343,  1641,  1637,  207,   1159,  140,   333,
-    1007,  1351,  76,    49,    71,    935,   335,   39,    711,   364,
-    143,   181,   583,   140,   149,   679,   239,   743,   42,    44,
-    42,    1703,  492,   245,   655,   333,   44,    71,    76,    39,
-    108,   42,    1447,  106,   140,   74,    76,    85,    34,    149,
-    44,    34,    807,   333,   108,   1159,  172,   42,    268,   333,
-    149,   39,    74,    39,    1127,  44,    85,    39,    76,    42,
-    1543,  106,   300,   74,    135,   149,   140,   53,    42,    44,
-    333,   39,    53,    39,    117,   655,   583,   807,   106,   108,
-    74,    44,    42,    76,    213,   44,    231,   39,    135,   487,
-    327,   53,    1511,  44,    106,   268,   333,   76,    74,    263,
-    71,    711,   231,   71,    167,   76,    39,    74,    44,    138,
-    74,    106,   39,    42,    167,   74,    236,   172,   1703,  106,
-    268,   74,    108,   42,    44,    135,   181,   333,   85,    53,
-    44,    103,   1543,  106,   204,   42,    44,    138,   76,    42,
-    76,    71,    53,    39,    333,   1511,  106,   140,   138,   76,
-    42,    76,    757,   135,   76,    1543,  106,   268,   74,    44,
-    42,    76,    117,   39,    333,   437,   1383,  44,    42,    44,
-    74,    204,   42,    44,    39,    53,    333,   871,   108,   74,
-    140,   42,    172,   333,   79,    117,   58,    231,   1415,  106,
-    300,   42,    76,    53,    1033,  1029,  333,   303,   263,   39,
-    263,   71,    775,   202,   74,    76,    42,    44,    39,    42,
-    39,    42,    44,    117,   333,   263,   1255,  106,   140,   76,
-    138,   44,    39,    53,    39,    42,    39,    332,   1287,  204,
-    42,    39,    140,   277,   44,    39,    204,   74,    108,   1479,
-    428,   42,    76,    117,   39,    181,   2343,  295,   1191,  42,
-    236,   204,   42,    44,    39,    181,   333,   623,   85,    967,
-    716,   42,    236,   42,    76,    42,    76,    231,   71,    1223,
-    204,   44,    76,    236,   39,    44,    333,   199,   71,    1031,
-    170,   76,    74,    44,    42,    44,    39,    333,   615,   76,
-    74,    85,    39,    687,   282,   151,   570,   53,    29511, 3566,
-    181,   6279,  3111,  85,    34279, 290,   18663, 18215, 999,   333,
-    85,    2535,  333,   967,   172,   53,    1543,  236,   181,   154,
-    134,   53,    58,    333,   239,   679,   615,   1033,  1029,  751,
-    149,   2407,  44,    39,    1770,  140,   422,   70,    53,    38,
-    44,    74,    39,    39,    39623, 39,    39,    134,   230,   70,
-    9319,  103,   135,   12679, 3431,  423,   295,   327,   58,    76,
-    53,    130,   1484,  748,   3738,  7898,  1274,  1946,  74,    108,
-    122,   202,   258,   268,   90,    236,   986,   140,   1978,  2138,
-    108,   58,    655,   2810,  815,   841,   837,   841,   229,   581,
-    841,   837,   41,    73,    41,    73,    137,   265,   133,   37,
-    229,   357,   841,   837,   73,    137,   265,   233,   837,   73,
-    137,   169,   41,    233,   837,   841,   837,   841,   837,   841,
-    837,   841,   837,   841,   837,   841,   901,   809,   57,    805,
-    57,    197,   809,   57,    805,   57,    197,   809,   57,    805,
-    57,    197,   809,   57,    805,   57,    197,   809,   57,    805,
-    57,    197,   94,    1613,  16410, 1772,  154,   1612,  282,   44,
-    474,   44,    90,    181,   172,   492,   325,   39,    645,   236,
-    556,   236,   76,    172,   1447,  236,   230,   333,   39,    58,
-    967,   44,    1415,  140,   333,   55,    231,   135,   71,    487,
-    6311,  303,   236,   1097,  1093,  236,   38,    333,   85,    1903,
-    58,    111,   55,    143,   1455,  58,    495,   135,   871,   71,
-    39,    39,    327,   135,   39,    39,    39,    39,    39,    39,
-    103,   71,    39,    39,    39,    39,    39,    39,    71,    39,
-    135,   231,   135,   135,   39,    327,   551,   103,   167,   551,
-    89,    1434,  3226,  506,   506,   506,   1210,  431,   5178,  954,
-    1434,  314,   90,    218,   8058,  184,   23322, 538,   442,   3738,
-    2874,  410,   58,    410,   1818,  346,   1306,  986,   90,    10906,
-    474,   186,   186,   250,   954,   378,   218,   346,   282,   250,
-    4730,  1786,  333,   39,    39,    39,    39,    39,    39,    39,
-    39,    39,    39,    17351, 39,    39,    34,    3074,  7692,  63,
-    63,
+    54,    50,    54,    50,    54,    50,    54,    50,    54,    50,
+    54,    50,    2041,  54,    50,    54,    50,    1049,  54,    50,
+    8281,  1562,  697,   90,    217,   1274,  1050,  3386,  1545,  1541,
+    126,   73,    69,    254,   105,   37,    94,    37,    94,    165,
+    70,    105,   37,    3166,  37,    218,   158,   108,   94,    149,
+    47,    85,    1221,  37,    37,    1799,  38,    53,    44,    743,
+    231,   231,   231,   231,   231,   231,   231,   231,   1036,  85,
+    52,    51,    52,    51,    117,   52,    51,    53,    52,    51,
+    309,   49,    85,    49,    53,    52,    51,    85,    52,    51,
+    54,    50,    54,    50,    54,    50,    54,    50,    181,   38,
+    341,   81,    149,   49,    53,    54,    437,   90,    117,   54,
+    50,    54,    50,    54,    50,    54,    50,    49,    858,   2874,
+    6874,  410,   61,    117,   58,    38,    39,    46,    54,    50,
+    54,    50,    54,    50,    54,    50,    54,    50,    90,    54,
+    50,    54,    50,    54,    50,    54,    50,    49,    54,    82,
+    58,    302,   140,   74,    49,    166,   90,    110,   38,    39,
+    53,    90,    2759,  76,    88,    70,    39,    49,    2887,  53,
+    102,   39,    1383,  3015,  90,    143,   346,   1031,  1178,  519,
+    1018,  335,   986,   271,   58,    495,   1050,  335,   1274,  495,
+    10266, 39,    39,    2074,  39,    711,   38,    36583, 1786,  1287,
+    198,   85,    8583,  38,    117,   519,   333,   71,    1502,  39,
+    44,    107,   53,    332,   53,    38,    926,   70,    76,    2247,
+    334,   76,    213,   760,   294,   88,    478,   69,    2014,  38,
+    261,   190,   350,   38,    88,    158,   39,    158,   69,    702,
+    137,   37,    169,   37,    510,   105,   37,    94,    94,    37,
+    37,    158,   102,   94,    39,    70,    37,    231,   44,    103,
+    44,    135,   44,    743,   74,    76,    42,    154,   44,    207,
+    90,    55,    58,    1671,  149,   74,    1607,  522,   76,    85,
+    333,   588,   199,   117,   39,    53,    71,    44,    333,   903,
+    268,   85,    743,   364,   74,    53,    935,   108,   42,    1511,
+    44,    74,    140,   74,    76,    106,   437,   38,    333,   85,
+    167,   44,    38,    295,   333,   167,   1319,  204,   74,    76,
+    74,    76,    103,   44,    263,   44,    42,    333,   149,   519,
+    38,    199,   122,   39,    42,    44,    42,    1607,  44,    39,
+    108,   71,    76,    167,   76,    39,    44,    39,    71,    38,
+    85,    359,   42,    76,    74,    85,    39,    70,    42,    44,
+    199,   199,   199,   231,   231,   1381,  56,    134,   293,   38,
+    88,    2565,  1127,  74,    44,    74,    44,    74,    53,    42,
+    44,    333,   39,    39,    743,   1575,  36,    68,    68,    36,
+    63,    63,    11719, 3399,  229,   165,   39,    44,    327,   57,
+    423,   167,   39,    71,    71,    3463,  568,   11623, 50,    54,
+    538,   2055,  1735,  58,    391,   55,    122,   524,   245,   54,
+    50,    53,    524,   53,    81,    80,    54,    50,    54,    50,
+    54,    50,    54,    50,    54,    50,    54,    50,    54,    50,
+    54,    50,    85,    54,    50,    149,   112,   117,   149,   49,
+    54,    50,    54,    50,    54,    50,    117,   57,    49,    121,
+    53,    55,    85,    167,   4327,  34,    117,   55,    117,   54,
+    50,    53,    57,    53,    49,    85,    333,   85,    121,   85,
+    841,   54,    53,    50,    56,    48,    56,    837,   54,    57,
+    50,    57,    54,    50,    53,    54,    50,    85,    327,   38,
+    1447,  70,    999,   199,   199,   199,   103,   87,    57,    56,
+    58,    87,    58,    153,   90,    98,    90,    391,   839,   615,
+    71,    487,   455,   3943,  117,   1455,  314,   1710,  143,   570,
+    79,    122,   442,   58,    1466,  44,    935,   1575,  44,    879,
+    1031,  143,   647,   46,    263,   46,    1223,  172,   967,   53,
+    1159,  263,   53,    174,   1289,  1285,  2503,  333,   1161,  1157,
+    1287,  1671,  53,    361,   489,   233,   73,    357,   485,   229,
+    69,    9959,  711,   263,   198,   1350,  294,   199,   39,    1415,
+    71,    39,    743,   53,    271,   743,   90,    239,   999,   303,
+    615,   71,    175,   711,   207,   53,    839,   53,    1799,  79,
+    71,    527,   1487,  39,    108,   76,    140,   135,   103,   935,
+    108,   44,    303,   309,   935,   79,    53,    935,   111,   263,
+    58,    903,   76,    175,   245,   1735,  245,   711,   271,   615,
+    271,   583,   149,   239,   2343,  1641,  1637,  207,   1159,  140,
+    333,   1007,  1351,  76,    49,    71,    108,   935,   335,   39,
+    711,   364,   143,   181,   583,   140,   149,   679,   239,   743,
+    42,    44,    42,    1703,  492,   245,   655,   333,   44,    71,
+    76,    39,    108,   42,    1447,  106,   140,   74,    76,    85,
+    34,    149,   44,    34,    807,   333,   108,   1159,  172,   42,
+    268,   333,   149,   39,    74,    39,    1127,  44,    85,    39,
+    76,    42,    1543,  106,   300,   74,    135,   149,   140,   53,
+    42,    44,    333,   39,    53,    39,    117,   655,   583,   807,
+    106,   108,   74,    44,    42,    76,    213,   44,    71,    44,
+    231,   39,    135,   487,   327,   53,    1511,  44,    106,   268,
+    333,   76,    74,    263,   71,    711,   231,   71,    167,   76,
+    39,    74,    44,    138,   74,    106,   39,    42,    167,   74,
+    236,   172,   1703,  106,   268,   74,    108,   42,    44,    135,
+    181,   333,   85,    53,    44,    103,   1543,  106,   204,   42,
+    44,    138,   76,    42,    76,    71,    53,    39,    333,   1511,
+    106,   140,   138,   76,    42,    76,    757,   135,   76,    1543,
+    106,   268,   74,    44,    42,    76,    117,   39,    333,   437,
+    1383,  44,    42,    44,    74,    204,   42,    44,    39,    53,
+    333,   871,   108,   74,    140,   42,    172,   333,   79,    117,
+    58,    231,   1415,  106,   300,   42,    76,    53,    1033,  1029,
+    333,   303,   263,   39,    263,   71,    775,   202,   74,    76,
+    42,    44,    39,    42,    39,    42,    44,    117,   333,   263,
+    1255,  106,   140,   76,    138,   44,    39,    53,    39,    42,
+    39,    332,   1287,  204,   42,    39,    140,   277,   44,    39,
+    204,   74,    108,   1479,  428,   42,    76,    117,   39,    181,
+    2343,  341,   295,   1191,  42,    236,   204,   42,    44,    39,
+    181,   333,   623,   85,    967,   716,   42,    236,   42,    76,
+    42,    76,    231,   71,    1223,  204,   44,    76,    236,   39,
+    44,    333,   199,   71,    1031,  170,   76,    74,    44,    42,
+    44,    39,    333,   615,   76,    74,    85,    76,    39,    42,
+    423,   1095,  74,    172,   74,    44,    42,    44,    437,   333,
+    39,    687,   282,   151,   570,   53,    29511, 3566,  181,   6279,
+    3111,  85,    34311, 514,   44,    199,   492,   18663, 18215, 999,
+    333,   85,    2535,  333,   967,   172,   53,    1543,  236,   181,
+    154,   134,   53,    58,    333,   239,   679,   615,   1033,  1029,
+    751,   149,   2407,  44,    39,    1770,  140,   422,   70,    53,
+    38,    44,    74,    39,    39,    39623, 39,    39,    134,   230,
+    70,    9319,  39,    103,   39,    135,   12679, 3431,  423,   295,
+    327,   58,    76,    53,    130,   1484,  748,   3738,  7898,  1274,
+    1946,  74,    108,   122,   202,   258,   268,   90,    236,   986,
+    140,   1978,  2138,  108,   58,    655,   655,   2810,  815,   841,
+    837,   841,   229,   581,   841,   837,   41,    73,    41,    73,
+    137,   265,   133,   37,    229,   357,   841,   837,   73,    137,
+    265,   233,   837,   73,    137,   169,   41,    233,   837,   841,
+    837,   841,   837,   841,   837,   841,   837,   841,   837,   841,
+    901,   809,   57,    805,   57,    197,   809,   57,    805,   57,
+    197,   809,   57,    805,   57,    197,   809,   57,    805,   57,
+    197,   809,   57,    805,   57,    197,   94,    1613,  16410, 1772,
+    154,   1612,  282,   44,    474,   44,    90,    181,   172,   492,
+    325,   39,    645,   197,   236,   556,   236,   76,    172,   1990,
+    44,    1447,  236,   230,   333,   39,    58,    967,   44,    1415,
+    140,   333,   55,    871,   38,    140,   333,   231,   135,   71,
+    487,   6311,  303,   236,   1097,  1093,  236,   38,    333,   85,
+    1903,  58,    111,   55,    143,   1455,  58,    495,   135,   871,
+    71,    39,    39,    327,   135,   39,    39,    39,    39,    39,
+    39,    103,   71,    39,    39,    39,    39,    39,    39,    71,
+    39,    135,   231,   135,   135,   39,    327,   551,   103,   167,
+    551,   89,    1434,  3226,  506,   506,   506,   1210,  431,   5178,
+    954,   1434,  314,   90,    218,   8058,  184,   23322, 570,   442,
+    3834,  3066,  410,   58,    410,   1818,  346,   1306,  986,   90,
+    10906, 474,   442,   314,   1498,  250,   474,   314,   314,   4730,
+    1786,  333,   39,    39,    39,    39,    39,    39,    39,    39,
+    39,    39,    17351, 39,    39,    39,    39,    34,    3074,  7692,
+    63,    63,
   };
 
 static int sqlite3Fts5UnicodeCategory(u32 iCode) {
