@@ -2,8 +2,6 @@
 dnl	This file is an input file used by the GNU "autoconf" program to
 dnl	generate the file "configure", which is run during Tcl installation
 dnl	to configure the system for the local environment.
-#
-# RCS: @(#) $Id: configure.in,v 1.43 2005/07/26 19:17:05 mdejong Exp $
 
 #-----------------------------------------------------------------------
 # Sample configure.ac for Tcl Extensions.  The only places you should
@@ -17,9 +15,11 @@ dnl	to configure the system for the local environment.
 # This initializes the environment with PACKAGE_NAME and PACKAGE_VERSION
 # set as provided.  These will also be added as -D defs in your Makefile
 # so you can encode the package version directly into the source files.
+# This will also define a special symbol for Windows (BUILD_<PACKAGE_NAME>
+# so that we create the export library with the dll.
 #-----------------------------------------------------------------------
 
-AC_INIT([sqlite], [3.39.4])
+AC_INIT([sqlite],[3.40.0])
 
 #--------------------------------------------------------------------
 # Call TEA_INIT as the first TEA_ macro to set up initial vars.
@@ -88,6 +88,10 @@ TEA_ADD_CFLAGS([-DSQLITE_ENABLE_GEOPOLY=1])
 TEA_ADD_CFLAGS([-DSQLITE_ENABLE_STAT4=1])
 TEA_ADD_CFLAGS([-DSQLITE_ENABLE_UPDATE_DELETE_LIMIT=1])
 TEA_ADD_CFLAGS([-DSQLITE_ENABLE_MATH_FUNCTIONS=1])
+TEA_ADD_CFLAGS([-DSQLITE_ENABLE_DESERIALIZE=1])
+TEA_ADD_CFLAGS([-DSQLITE_ENABLE_DBPAGE_VTAB=1])
+TEA_ADD_CFLAGS([-DSQLITE_ENABLE_BYTECODE_VTAB=1])
+TEA_ADD_CFLAGS([-DSQLITE_ENABLE_DBSTAT_VTAB=1])
 TEA_ADD_CFLAGS([-DSQLITE_LIKE_DOESNT_MATCH_BLOBS=1])
 TEA_ADD_CFLAGS([-DSQLITE_UNTESTABLE=1])
 TEA_ADD_CFLAGS([-DSQLITE_OMIT_DEPRECATED=1])
@@ -118,6 +122,31 @@ if test x$with_system_sqlite != xno; then
       LIBS="$LIBS -lsqlite3"])])
 else
     TEA_ADD_CFLAGS([-DSQLITE_API=MODULE_SCOPE])
+fi
+
+#--------------------------------------------------------------------
+# __CHANGE__
+#
+# You can add more files to clean if your extension creates any extra
+# files by extending CLEANFILES.
+# Add pkgIndex.tcl if it is generated in the Makefile instead of ./configure
+# and change Makefile.in to move it from CONFIG_CLEAN_FILES to BINARIES var.
+#
+# A few miscellaneous platform-specific items:
+# TEA_ADD_* any platform specific compiler/build info here.
+#--------------------------------------------------------------------
+
+#CLEANFILES="$CLEANFILES pkgIndex.tcl"
+if test "${TEA_PLATFORM}" = "windows" ; then
+    # Ensure no empty if clauses
+    :
+    #TEA_ADD_SOURCES([win/winFile.c])
+    #TEA_ADD_INCLUDES([-I\"$(${CYGPATH} ${srcdir}/win)\"])
+else
+    # Ensure no empty else clauses
+    :
+    #TEA_ADD_SOURCES([unix/unixFile.c])
+    #TEA_ADD_LIBS([-lsuperfly])
 fi
 
 #--------------------------------------------------------------------

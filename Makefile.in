@@ -60,6 +60,8 @@ PKG_HEADERS	= @PKG_HEADERS@
 #========================================================================
 
 PKG_LIB_FILE	= @PKG_LIB_FILE@
+PKG_LIB_FILE8	= @PKG_LIB_FILE8@
+PKG_LIB_FILE9	= @PKG_LIB_FILE9@
 PKG_STUB_LIB_FILE = @PKG_STUB_LIB_FILE@
 
 lib_BINARIES	= $(PKG_LIB_FILE)
@@ -86,13 +88,16 @@ pkgdatadir	= $(datadir)/$(PKG_DIR)
 pkglibdir	= $(libdir)/$(PKG_DIR)
 pkgincludedir	= $(includedir)/$(PKG_DIR)
 
-top_builddir	= .
+top_builddir	= @abs_top_builddir@
 
-INSTALL		= @INSTALL@
-INSTALL_PROGRAM	= @INSTALL_PROGRAM@
+INSTALL_OPTIONS	=
+INSTALL		= @INSTALL@ $(INSTALL_OPTIONS)
+INSTALL_DATA_DIR = @INSTALL_DATA_DIR@
 INSTALL_LIBRARY	= @INSTALL_LIBRARY@
 INSTALL_DATA	= @INSTALL_DATA@
+INSTALL_PROGRAM	= @INSTALL_PROGRAM@
 INSTALL_SCRIPT	= @INSTALL_SCRIPT@
+INSTALL_LIBRARY	= @INSTALL_LIBRARY@
 
 PACKAGE_NAME	= @PACKAGE_NAME@
 PACKAGE_VERSION	= @PACKAGE_VERSION@
@@ -119,8 +124,6 @@ TCL_SRC_DIR	= @TCL_SRC_DIR@
 #TK_BIN_DIR	= @TK_BIN_DIR@
 #TK_SRC_DIR	= @TK_SRC_DIR@
 
-# This is no longer necessary even for packages that use private Tcl headers
-#TCL_TOP_DIR_NATIVE	= @TCL_TOP_DIR_NATIVE@
 # Not used, but retained for reference of what libs Tcl required
 #TCL_LIBS	= @TCL_LIBS@
 
@@ -134,35 +137,37 @@ TCL_SRC_DIR	= @TCL_SRC_DIR@
 EXTRA_PATH	= $(top_builddir):$(TCL_BIN_DIR)
 #EXTRA_PATH	= $(top_builddir):$(TCL_BIN_DIR):$(TK_BIN_DIR)
 TCLLIBPATH	= $(top_builddir)
-TCLSH_ENV	= TCL_LIBRARY=`@CYGPATH@ $(TCL_SRC_DIR)/library` \
-		  @LD_LIBRARY_PATH_VAR@="$(EXTRA_PATH):$(@LD_LIBRARY_PATH_VAR@)" \
+TCLSH_ENV	= TCL_LIBRARY=`@CYGPATH@ $(TCL_SRC_DIR)/library`
+PKG_ENV		= @LD_LIBRARY_PATH_VAR@="$(EXTRA_PATH):$(@LD_LIBRARY_PATH_VAR@)" \
 		  PATH="$(EXTRA_PATH):$(PATH)" \
 		  TCLLIBPATH="$(TCLLIBPATH)"
 #		  TK_LIBRARY=`@CYGPATH@ $(TK_SRC_DIR)/library`
 
 TCLSH_PROG	= @TCLSH_PROG@
-TCLSH	= $(TCLSH_ENV) $(TCLSH_PROG)
+TCLSH		= $(TCLSH_ENV) $(PKG_ENV) $(TCLSH_PROG)
 
+#WISH_ENV	= TK_LIBRARY=`@CYGPATH@ $(TK_SRC_DIR)/library`
 #WISH_PROG	= @WISH_PROG@
-#WISH	= $(TCLSH_ENV) $(WISH_PROG)
-
+#WISH		= $(TCLSH_ENV) $(WISH_ENV) $(PKG_ENV) $(WISH_PROG)
 
 SHARED_BUILD	= @SHARED_BUILD@
 
-INCLUDES	= @PKG_INCLUDES@ @TCL_INCLUDES@ -I$(srcdir)/..
+INCLUDES	= @PKG_INCLUDES@ @TCL_INCLUDES@ -I. -I$(srcdir)/..
 #INCLUDES	= @PKG_INCLUDES@ @TCL_INCLUDES@ @TK_INCLUDES@ @TK_XINCLUDES@
 
 PKG_CFLAGS	= @PKG_CFLAGS@ -DSQLITE_EXTERN=
 
 # TCL_DEFS is not strictly need here, but if you remove it, then you
-# must make sure that configure.in checks for the necessary components
+# must make sure that configure.ac checks for the necessary components
 # that your library may use.  TCL_DEFS can actually be a problem if
 # you do not compile with a similar machine setup as the Tcl core was
 # compiled with.
 #DEFS		= $(TCL_DEFS) @DEFS@ $(PKG_CFLAGS)
 DEFS		= @DEFS@ $(PKG_CFLAGS)
 
+# Move pkgIndex.tcl to 'BINARIES' var if it is generated in the Makefile
 CONFIG_CLEAN_FILES = Makefile pkgIndex.tcl
+CLEANFILES	= @CLEANFILES@
 
 CPPFLAGS	= @CPPFLAGS@
 LIBS		= @PKG_LIBS@ @LIBS@
@@ -186,7 +191,7 @@ VALGRINDARGS	= --tool=memcheck --num-callers=8 --leak-resolution=high \
 
 #========================================================================
 # TEA TARGETS.  Please note that the "libraries:" target refers to platform
-# independent files, and the "binaries:" target inclues executable programs and
+# independent files, and the "binaries:" target includes executable programs and
 # platform-dependent libraries.  Modify these targets so that they install
 # the various pieces of your package.  The make and install rules
 # for the BINARIES that you specified above have already been done.
@@ -228,11 +233,11 @@ install-binaries: binaries install-lib-binaries install-bin-binaries
 #========================================================================
 
 install-libraries: libraries
-	@mkdir -p $(DESTDIR)$(includedir)
+	@$(INSTALL_DATA_DIR) "$(DESTDIR)$(includedir)"
 	@echo "Installing header files in $(DESTDIR)$(includedir)"
 	@list='$(PKG_HEADERS)'; for i in $$list; do \
 	    echo "Installing $(srcdir)/$$i" ; \
-	    $(INSTALL_DATA) $(srcdir)/$$i $(DESTDIR)$(includedir) ; \
+	    $(INSTALL_DATA) $(srcdir)/$$i "$(DESTDIR)$(includedir)" ; \
 	done;
 
 #========================================================================
@@ -241,7 +246,7 @@ install-libraries: libraries
 #========================================================================
 
 install-doc: doc
-	@mkdir -p $(DESTDIR)$(mandir)/mann
+	@$(INSTALL_DATA_DIR) "$(DESTDIR)$(mandir)/mann"
 	@echo "Installing documentation in $(DESTDIR)$(mandir)"
 	@list='$(srcdir)/doc/*.n'; for i in $$list; do \
 	    echo "Installing $$i"; \
@@ -258,7 +263,21 @@ shell: binaries libraries
 	@$(TCLSH) $(SCRIPT)
 
 gdb:
-	$(TCLSH_ENV) gdb $(TCLSH_PROG) $(SCRIPT)
+	$(TCLSH_ENV) $(PKG_ENV) $(GDB) $(TCLSH_PROG) $(SCRIPT)
+
+gdb-test: binaries libraries
+	$(TCLSH_ENV) $(PKG_ENV) $(GDB) \
+	    --args $(TCLSH_PROG) `@CYGPATH@ $(srcdir)/tests/all.tcl` \
+	    $(TESTFLAGS) -singleproc 1 \
+	    -load "package ifneeded $(PACKAGE_NAME) $(PACKAGE_VERSION) \
+		[list load `@CYGPATH@ $(PKG_LIB_FILE)` [string totitle $(PACKAGE_NAME)]]"
+
+valgrind: binaries libraries
+	$(TCLSH_ENV) $(PKG_ENV) $(VALGRIND) $(VALGRINDARGS) $(TCLSH_PROG) \
+	    `@CYGPATH@ $(srcdir)/tests/all.tcl` $(TESTFLAGS)
+
+valgrindshell: binaries libraries
+	$(TCLSH_ENV) $(PKG_ENV) $(VALGRIND) $(VALGRINDARGS) $(TCLSH_PROG) $(SCRIPT)
 
 depend:
 
@@ -297,7 +316,7 @@ $(PKG_STUB_LIB_FILE): $(PKG_STUB_OBJECTS)
 # As necessary, add $(srcdir):$(srcdir)/compat:....
 #========================================================================
 
-VPATH = $(srcdir):$(srcdir)/generic:$(srcdir)/unix:$(srcdir)/win
+VPATH = $(srcdir):$(srcdir)/generic:$(srcdir)/unix:$(srcdir)/win:$(srcdir)/macosx
 
 .c.@OBJEXT@:
 	$(COMPILE) -c `@CYGPATH@ $<` -o $@
@@ -308,9 +327,12 @@ VPATH = $(srcdir):$(srcdir)/generic:$(srcdir)/unix:$(srcdir)/win
 #========================================================================
 
 #COMPRESS	= tar cvf $(PKG_DIR).tar $(PKG_DIR); compress $(PKG_DIR).tar
-COMPRESS	= gtar zcvf $(PKG_DIR).tar.gz $(PKG_DIR)
+COMPRESS	= tar zcvf $(PKG_DIR).tar.gz $(PKG_DIR)
 DIST_ROOT	= /tmp/dist
 DIST_DIR	= $(DIST_ROOT)/$(PKG_DIR)
+
+DIST_INSTALL_DATA	= CPPROG='cp -p' $(INSTALL) -m 644
+DIST_INSTALL_SCRIPT	= CPPROG='cp -p' $(INSTALL) -m 755
 
 dist-clean:
 	rm -rf $(DIST_DIR) $(DIST_ROOT)/$(PKG_DIR).tar.*
@@ -351,10 +373,10 @@ dist: dist-clean
 
 #========================================================================
 # Don't modify the file to clean here.  Instead, set the "CLEANFILES"
-# variable in configure.in
+# variable in configure.ac
 #========================================================================
 
-clean:  
+clean:
 	-test -z "$(BINARIES)" || rm -f $(BINARIES)
 	-rm -f *.$(OBJEXT) core *.core
 	-test -z "$(CLEANFILES)" || rm -f $(CLEANFILES)
@@ -449,6 +471,7 @@ uninstall-binaries:
 	done
 
 .PHONY: all binaries clean depend distclean doc install libraries test
+.PHONY: gdb gdb-test valgrind valgrindshell
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.
