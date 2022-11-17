@@ -91655,7 +91655,11 @@ case OP_TypeCheck: {
             testcase( pIn1->u.i==140737488355327LL );
             testcase( pIn1->u.i==-140737488355328LL );
             testcase( pIn1->u.i==-140737488355329LL );
+#ifdef _MSC_VER
+            if( pIn1->u.i<=140737488355327I64 && pIn1->u.i>=-140737488355328I64){
+#else
             if( pIn1->u.i<=140737488355327LL && pIn1->u.i>=-140737488355328LL){
+#endif
               pIn1->flags |= MEM_IntReal;
               pIn1->flags &= ~MEM_Int;
             }else{
