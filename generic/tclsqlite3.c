@@ -539,7 +539,7 @@ static int safeToUseEvalObjv(Tcl_Interp *dummy, Tcl_Obj *pCmd){
   ** characters appear in pCmd, we will report the string as unsafe.
   */
   const char *z;
-  int n;
+  Tcl_Size n;
   (void)dummy;
 
   z = Tcl_GetStringFromObj(pCmd, &n);
@@ -1073,7 +1073,7 @@ static void tclSqlFunc(sqlite3_context *context, int argc, sqlite3_value**argv){
     ** be preserved and reused on the next invocation.
     */
     Tcl_Obj **aArg;
-    int nArg;
+    Tcl_Size nArg;
     if( Tcl_ListObjGetElements(p->interp, p->pScript, &nArg, &aArg) ){
       sqlite3_result_error(context, Tcl_GetString(Tcl_GetObjResult(p->interp)), -1);
       return;
@@ -1132,7 +1132,7 @@ static void tclSqlFunc(sqlite3_context *context, int argc, sqlite3_value**argv){
     sqlite3_result_error(context, Tcl_GetString(Tcl_GetObjResult(p->interp)), -1);
   }else{
     Tcl_Obj *pVar = Tcl_GetObjResult(p->interp);
-    int n;
+    Tcl_Size n;
     u8 *data;
     const char *zType = (pVar->typePtr ? pVar->typePtr->name : "");
     char c = zType[0];
@@ -1547,7 +1547,7 @@ static int dbPrepareAndBind(
         }
       }
       if( pVar ){
-        int n;
+        Tcl_Size n;
         u8 *data;
         const char *zType = (pVar->typePtr ? pVar->typePtr->name : "");
         c = zType[0];
@@ -2122,7 +2122,7 @@ static int SQLITE_TCLAPI DbObjCmd(
       }
     }else{
       char *zAuth;
-      int len;
+      Tcl_Size len;
       if( pDb->zAuth ){
         Tcl_Free(pDb->zAuth);
       }
@@ -2225,7 +2225,7 @@ static int SQLITE_TCLAPI DbObjCmd(
       }
     }else{
       char *zCallback;
-      int len;
+      Tcl_Size len;
       if( pDb->zBindFallback ){
         Tcl_Free(pDb->zBindFallback);
       }
@@ -2255,7 +2255,7 @@ static int SQLITE_TCLAPI DbObjCmd(
       }
     }else{
       char *zBusy;
-      int len;
+      Tcl_Size len;
       if( pDb->zBusy ){
         Tcl_Free(pDb->zBusy);
       }
@@ -2362,7 +2362,7 @@ static int SQLITE_TCLAPI DbObjCmd(
     SqlCollate *pCollate;
     char *zName;
     char *zScript;
-    int nScript;
+    Tcl_Size nScript;
     if( objc!=4 ){
       Tcl_WrongNumArgs(interp, 2, objv, "NAME SCRIPT");
       return TCL_ERROR;
@@ -2421,7 +2421,7 @@ static int SQLITE_TCLAPI DbObjCmd(
       }
     }else{
       const char *zCommit;
-      int len;
+      Tcl_Size len;
       if( pDb->zCommit ){
         Tcl_Free(pDb->zCommit);
       }
@@ -2743,9 +2743,9 @@ static int SQLITE_TCLAPI DbObjCmd(
     Tcl_Obj *pValue = 0;
     unsigned char *pBA;
     unsigned char *pData;
-    int len, xrc;
+    int i, xrc;
     Tcl_WideInt mxSize = 0;
-    int i;
+    Tcl_Size len;
     int isReadonly = 0;
 
 
@@ -3115,7 +3115,7 @@ deserialize_error:
       return TCL_ERROR;
     }
     if( objc==3 ){
-      int len;
+      Tcl_Size len;
       char *zNull = Tcl_GetStringFromObj(objv[2], &len);
       if( pDb->zNull ){
         Tcl_Free(pDb->zNull);
@@ -3166,7 +3166,7 @@ deserialize_error:
       }
     }else if( objc==4 ){
       char *zProgress;
-      int len;
+      Tcl_Size len;
       int N;
       if( TCL_OK!=Tcl_GetIntFromObj(interp, objv[2], &N) ){
         return TCL_ERROR;
@@ -3212,7 +3212,7 @@ deserialize_error:
       }
     }else{
       char *zProfile;
-      int len;
+      Tcl_Size len;
       if( pDb->zProfile ){
         Tcl_Free(pDb->zProfile);
       }
@@ -3422,7 +3422,7 @@ deserialize_error:
       }
     }else{
       char *zTrace;
-      int len;
+      Tcl_Size len;
       if( pDb->zTrace ){
         Tcl_Free(pDb->zTrace);
       }
@@ -3461,7 +3461,7 @@ deserialize_error:
       }
     }else{
       char *zTraceV2;
-      int len;
+      Tcl_Size len;
       Tcl_WideInt wMask = 0;
       if( objc==4 ){
         static const char *const TTYPE_strs[] = {
