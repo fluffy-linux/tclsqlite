@@ -35268,29 +35268,29 @@ SQLITE_PRIVATE void sqlite3FpDecode(FpDecode *p, double r, int iRound, int mxRou
     double rr[2];
     rr[0] = r;
     rr[1] = 0.0;
-    if( rr[0]>1.84e+19 ){
-      while( rr[0]>1.84e+119 ){
+    if( rr[0]>9.223372036854774784e+18 ){
+      while( rr[0]>9.223372036854774784e+118 ){
         exp += 100;
         dekkerMul2(rr, 1.0e-100, -1.99918998026028836196e-117);
       }
-      while( rr[0]>1.84e+29 ){
+      while( rr[0]>9.223372036854774784e+28 ){
         exp += 10;
         dekkerMul2(rr, 1.0e-10, -3.6432197315497741579e-27);
       }
-      while( rr[0]>1.84e+19 ){
+      while( rr[0]>9.223372036854774784e+18 ){
         exp += 1;
         dekkerMul2(rr, 1.0e-01, -5.5511151231257827021e-18);
       }
     }else{
-      while( rr[0]<1.84e-82  ){
+      while( rr[0]<9.223372036854774784e-83  ){
         exp -= 100;
         dekkerMul2(rr, 1.0e+100, -1.5902891109759918046e+83);
       }
-      while( rr[0]<1.84e+08  ){
+      while( rr[0]<9.223372036854774784e+07  ){
         exp -= 10;
         dekkerMul2(rr, 1.0e+10, 0.0);
       }
-      while( rr[0]<1.84e+18  ){
+      while( rr[0]<9.22337203685477478e+17  ){
         exp -= 1;
         dekkerMul2(rr, 1.0e+01, 0.0);
       }
@@ -244602,6 +244602,9 @@ static int fts5FilterMethod(
     pCsr->iFirstRowid = fts5GetRowidLimit(pRowidGe, SMALLEST_INT64);
   }
 
+  rc = sqlite3Fts5IndexLoadConfig(pTab->p.pIndex);
+  if( rc!=SQLITE_OK ) goto filter_out;
+
   if( pTab->pSortCsr ){
     /* If pSortCsr is non-NULL, then this call is being made as part of
     ** processing for a "... MATCH <expr> ORDER BY rank" query (ePlan is
@@ -244624,7 +244627,9 @@ static int fts5FilterMethod(
     pCsr->pExpr = pTab->pSortCsr->pExpr;
     rc = fts5CursorFirst(pTab, pCsr, bDesc);
   }else if( pCsr->pExpr ){
-    rc = fts5CursorParseRank(pConfig, pCsr, pRank);
+    if( rc==SQLITE_OK ){
+      rc = fts5CursorParseRank(pConfig, pCsr, pRank);
+    }
     if( rc==SQLITE_OK ){
       if( bOrderByRank ){
         pCsr->ePlan = FTS5_PLAN_SORTED_MATCH;
