@@ -1585,8 +1585,9 @@ static int dbPrepareAndBind(
           pPreStmt->apParm[iParm++] = pVar;
         }else if( c=='b' && (strcmp(zType,"boolean")==0 ||
               strcmp(zType,"booleanString")==0) && pVar->bytes==0){
-          Tcl_GetBooleanFromObj(interp, pVar, &n);
-          sqlite3_bind_int(pStmt, i, n);
+          int boolVar;
+          Tcl_GetBooleanFromObj(interp, pVar, &boolVar);
+          sqlite3_bind_int(pStmt, i, boolVar);
         }else if( c=='d' && strcmp(zType,"double")==0 ){
           double r;
           Tcl_GetDoubleFromObj(interp, pVar, &r);
