@@ -114,10 +114,6 @@ static int DbUseNre(void);
 # define DbUseNre() 0
 #endif
 
-#if (TCL_MAJOR_VERSION == 8) && (TCL_MINOR_VERSION < 7)
-#   define Tcl_Size int
-#endif
-
 /*
  * If we are not sure the platform is 32-bit, always use sqlite3_????64()
  * in stead of sqlite3_????() for certain functions, in order to prevent overflow.
