@@ -2,9 +2,9 @@
 # Commands covered:  julianday
 #
 # This file contains a testcase which checks whether sqlite3
-# can parse a ISO-8601 timestap containing a leap second. Last
+# can parse a ISO-8601 timestamp containing a leap second. Last
 # leap second (to date) happened at "2012-06-30 23:59:60", which
-# is a perfectly valid time-stap, but stock sqlite cannot handle that.
+# is a perfectly valid time-stamp, but stock sqlite3 cannot handle that.
 #
 # This file is put into public domain, under the same terms as the
 # rest of the SQLite code.
