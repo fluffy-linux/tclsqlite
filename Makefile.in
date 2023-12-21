@@ -141,7 +141,6 @@ TCLSH_ENV	= TCL_LIBRARY=`@CYGPATH@ $(TCL_SRC_DIR)/library`
 PKG_ENV		= @LD_LIBRARY_PATH_VAR@="$(EXTRA_PATH):$(@LD_LIBRARY_PATH_VAR@)" \
 		  PATH="$(EXTRA_PATH):$(PATH)" \
 		  TCLLIBPATH="$(TCLLIBPATH)"
-#		  TK_LIBRARY=`@CYGPATH@ $(TK_SRC_DIR)/library`
 
 TCLSH_PROG	= @TCLSH_PROG@
 TCLSH		= $(TCLSH_ENV) $(PKG_ENV) $(TCLSH_PROG)
@@ -209,7 +208,6 @@ all: binaries libraries doc
 binaries: $(BINARIES)
 
 libraries:
-
 
 #========================================================================
 # Your doc target should differentiate from doc builds (by the developer)
@@ -321,6 +319,20 @@ VPATH = $(srcdir):$(srcdir)/generic:$(srcdir)/unix:$(srcdir)/win:$(srcdir)/macos
 .c.@OBJEXT@:
 	$(COMPILE) -c `@CYGPATH@ $<` -o $@
 
+tclsqlite3.@OBJEXT@:	sqlite3Uuid.h
+
+$(srcdir)/manifest.uuid:
+	printf "git-" >$(srcdir)/manifest.uuid
+	(cd $(srcdir); git rev-parse HEAD >>$(srcdir)/manifest.uuid || \
+	    (printf "svn-r" >$(srcdir)/manifest.uuid ; \
+	    svn info --show-item last-changed-revision >>$(srcdir)/manifest.uuid) || \
+	    printf "unknown" >$(srcdir)/manifest.uuid)
+
+sqlite3Uuid.h:	$(srcdir)/manifest.uuid
+	echo "#define SQLITE3_VERSION_UUID \\" >$@
+	cat $(srcdir)/manifest.uuid >>$@
+	echo "" >>$@
+
 #========================================================================
 # Distribution creation
 # You may need to tweak this target to make it work correctly.
@@ -337,9 +349,10 @@ DIST_INSTALL_SCRIPT	= CPPROG='cp -p' $(INSTALL) -m 755
 dist-clean:
 	rm -rf $(DIST_DIR) $(DIST_ROOT)/$(PKG_DIR).tar.*
 
-dist: dist-clean
+dist: dist-clean $(srcdir)/manifest.uuid
 	mkdir -p $(DIST_DIR)/compat/sqlite3
 	cp -p $(srcdir)/README* $(srcdir)/license* \
+		$(srcdir)/manifest.uuid \
 		$(srcdir)/aclocal.m4 $(srcdir)/configure $(srcdir)/*.in \
 		$(srcdir)/configure.ac $(DIST_DIR)/
 	chmod 664 $(DIST_DIR)/Makefile.in $(DIST_DIR)/aclocal.m4
