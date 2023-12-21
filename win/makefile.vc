@@ -26,6 +26,13 @@ PRJ_PACKAGE_TCLNAME = sqlite3
 
 PRJ_OBJS = $(TMP_DIR)\tclsqlite3.obj
 
+$(ROOT)\manifest.uuid:
+   copy $(WIN_DIR)\gitmanifest.in $(ROOT)\manifest.uuid
+   git rev-parse HEAD >>$(ROOT)\manifest.uuid
+
+$(TMP_DIR)\sqlite3Uuid.h:	$(ROOT)\manifest.uuid
+	copy $(WIN_DIR)\sqlite3Uuid.h.in+$(ROOT)\manifest.uuid $(TMP_DIR)\sqlite3Uuid.h
+
 # Preprocessor macros specific to sqlite3.
 PRJ_DEFINES = -D_CRT_SECURE_NO_DEPRECATE -D_CRT_NONSTDC_NO_DEPRECATE \
                   -DSQLITE_ENABLE_DBPAGE_VTAB=1 -DSQLITE_ENABLE_DBSTAT_VTAB=1 \
@@ -57,3 +64,5 @@ pkgindex:
 # Install the manpage though on Windows, doubt it does much good
 install:    default-install-docs-n
 
+# Explicit dependency rules
+$(GENERICDIR)\tclsqlite3.c : $(TMP_DIR)\sqlite3Uuid.h
