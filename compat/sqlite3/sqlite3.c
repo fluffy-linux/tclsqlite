@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.45.2.  By combining all the individual C code files into this
+** version 3.45.3.  By combining all the individual C code files into this
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -459,9 +459,9 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.45.2"
-#define SQLITE_VERSION_NUMBER 3045002
-#define SQLITE_SOURCE_ID      "2024-03-12 11:06:23 d8cd6d49b46a395b13955387d05e9e1a2a47e54fb99f3c9b59835bbefad6af77"
+#define SQLITE_VERSION        "3.45.3"
+#define SQLITE_VERSION_NUMBER 3045003
+#define SQLITE_SOURCE_ID      "2024-04-15 13:34:05 8653b758870e6ef0c98d46b3ace27849054af85da891eb121e9aaa537f1e8355"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -63866,7 +63866,7 @@ SQLITE_PRIVATE sqlite3_file *sqlite3PagerFile(Pager *pPager){
 ** This will be either the rollback journal or the WAL file.
 */
 SQLITE_PRIVATE sqlite3_file *sqlite3PagerJrnlFile(Pager *pPager){
-#if SQLITE_OMIT_WAL
+#ifdef SQLITE_OMIT_WAL
   return pPager->jfd;
 #else
   return pPager->pWal ? sqlite3WalFile(pPager->pWal) : pPager->jfd;
@@ -79683,7 +79683,7 @@ SQLITE_PRIVATE int sqlite3BtreeInsert(
   }else if( loc<0 && pPage->nCell>0 ){
     assert( pPage->leaf );
     idx = ++pCur->ix;
-    pCur->curFlags &= ~BTCF_ValidNKey;
+    pCur->curFlags &= ~(BTCF_ValidNKey|BTCF_ValidOvfl);
   }else{
     assert( pPage->leaf );
   }
@@ -79713,7 +79713,7 @@ SQLITE_PRIVATE int sqlite3BtreeInsert(
   */
   if( pPage->nOverflow ){
     assert( rc==SQLITE_OK );
-    pCur->curFlags &= ~(BTCF_ValidNKey);
+    pCur->curFlags &= ~(BTCF_ValidNKey|BTCF_ValidOvfl);
     rc = balance(pCur);
 
     /* Must make sure nOverflow is reset to zero even if the balance()
@@ -135256,7 +135256,10 @@ static int xferOptimization(
     }
   }
 #ifndef SQLITE_OMIT_CHECK
-  if( pDest->pCheck && sqlite3ExprListCompare(pSrc->pCheck,pDest->pCheck,-1) ){
+  if( pDest->pCheck
+   && (db->mDbFlags & DBFLAG_Vacuum)==0
+   && sqlite3ExprListCompare(pSrc->pCheck,pDest->pCheck,-1)
+  ){
     return 0;   /* Tables have different CHECK constraints.  Ticket #2252 */
   }
 #endif
@@ -250807,7 +250810,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2024-03-12 11:06:23 d8cd6d49b46a395b13955387d05e9e1a2a47e54fb99f3c9b59835bbefad6af77", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2024-04-15 13:34:05 8653b758870e6ef0c98d46b3ace27849054af85da891eb121e9aaa537f1e8355", -1, SQLITE_TRANSIENT);
 }
 
 /*
