@@ -2894,7 +2894,7 @@ deserialize_error:
         Tcl_ResetResult(interp);
       }
     }else if( rc==TCL_BREAK || rc==TCL_OK ){
-      pResult = Tcl_NewWideIntObj(rc==TCL_OK);
+      pResult = Tcl_NewBooleanObj(rc==TCL_OK);
     }
     dbEvalFinalize(&sEval);
     if( pResult ) Tcl_SetObjResult(interp, pResult);
