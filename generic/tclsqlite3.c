@@ -40,14 +40,17 @@
 # include "msvc.h"
 #endif
 
+/****** Copy of tclsqlite.h ******/
 #if defined(INCLUDE_SQLITE_TCL_H)
-# include "sqlite_tcl.h"
+# include "sqlite_tcl.h"   /* Special case for Windows using STDCALL */
 #else
-# include "tcl.h"
+# include <tcl.h>          /* All normal cases */
 # ifndef SQLITE_TCLAPI
-#  define SQLITE_TCLAPI
+#   define SQLITE_TCLAPI
 # endif
 #endif
+/**** End copy of tclsqlite.h ****/
+
 #include <errno.h>
 #include "sqlite3Uuid.h"
 
@@ -243,7 +246,8 @@ struct SqliteDb {
 struct IncrblobChannel {
   sqlite3_blob *pBlob;      /* sqlite3 blob handle */
   SqliteDb *pDb;            /* Associated database connection */
-  Tcl_WideInt iSeek;        /* Current seek offset */
+  sqlite3_int64 iSeek;      /* Current seek offset */
+  unsigned int isClosed;    /* TCL_CLOSE_READ or TCL_CLOSE_WRITE */
   Tcl_Channel channel;      /* Channel identifier */
   IncrblobChannel *pNext;   /* Linked list of all open incrblob channels */
   IncrblobChannel *pPrev;   /* Linked list of all open incrblob channels */
@@ -287,13 +291,22 @@ static void closeIncrblobChannels(SqliteDb *pDb){
 /*
 ** Close an incremental blob channel.
 */
-static int SQLITE_TCLAPI incrblobClose(
-  void *instanceData,
-  Tcl_Interp *interp
+static int SQLITE_TCLAPI incrblobClose2(
+  ClientData instanceData,
+  Tcl_Interp *interp,
+  int flags
 ){
   IncrblobChannel *p = (IncrblobChannel *)instanceData;
-  int rc = sqlite3_blob_close(p->pBlob);
+  int  rc;
   sqlite3 *db = p->pDb->db;
+
+  if( flags ){
+    p->isClosed |= flags;
+    return TCL_OK;
+  }
+
+  /* If we reach this point, then we really do need to close the channel */
+  rc = sqlite3_blob_close(p->pBlob);
 
   /* Remove the channel from the SqliteDb.pIncrblob list. */
   if( p->pNext ){
@@ -310,21 +323,16 @@ static int SQLITE_TCLAPI incrblobClose(
   Tcl_Free((char *)p);
 
   if( rc!=SQLITE_OK ){
-    Tcl_AppendResult(interp, sqlite3_errmsg(db), (char*)0);
+    Tcl_SetResult(interp, (char *)sqlite3_errmsg(db), TCL_VOLATILE);
     return TCL_ERROR;
   }
   return TCL_OK;
 }
-
-static int SQLITE_TCLAPI incrblobClose2(
-  void *instanceData,
-  Tcl_Interp *interp,
-  int flags
+static int SQLITE_TCLAPI incrblobClose(
+  ClientData instanceData,
+  Tcl_Interp *interp
 ){
-  if( (flags&(TCL_CLOSE_READ|TCL_CLOSE_WRITE))==0 ){
-    return incrblobClose(instanceData, interp);
-  }
-  return EINVAL;
+  return incrblobClose2(instanceData, interp, 0);
 }
 
 
@@ -332,15 +340,15 @@ static int SQLITE_TCLAPI incrblobClose2(
 ** Read data from an incremental blob channel.
 */
 static int SQLITE_TCLAPI incrblobInput(
-  void *instanceData,
+  ClientData instanceData,
   char *buf,
   int bufSize,
   int *errorCodePtr
 ){
   IncrblobChannel *p = (IncrblobChannel *)instanceData;
-  Tcl_WideInt nRead = bufSize; /* Number of bytes to read */
-  int nBlob;                   /* Total size of the blob */
-  int rc;                      /* sqlite error code */
+  sqlite3_int64 nRead = bufSize;   /* Number of bytes to read */
+  sqlite3_int64 nBlob;             /* Total size of the blob */
+  int rc;                          /* sqlite error code */
 
   nBlob = sqlite3_blob_bytes(p->pBlob);
   if( (p->iSeek+nRead)>nBlob ){
@@ -350,7 +358,7 @@ static int SQLITE_TCLAPI incrblobInput(
     return 0;
   }
 
-  rc = sqlite3_blob_read(p->pBlob, (void *)buf, nRead, p->iSeek);
+  rc = sqlite3_blob_read(p->pBlob, (void *)buf, (int)nRead, (int)p->iSeek);
   if( rc!=SQLITE_OK ){
     *errorCodePtr = rc;
     return -1;
@@ -364,15 +372,15 @@ static int SQLITE_TCLAPI incrblobInput(
 ** Write data to an incremental blob channel.
 */
 static int SQLITE_TCLAPI incrblobOutput(
-  void *instanceData,
+  ClientData instanceData,
   const char *buf,
   int toWrite,
   int *errorCodePtr
 ){
   IncrblobChannel *p = (IncrblobChannel *)instanceData;
-  int nWrite = toWrite;        /* Number of bytes to write */
-  int nBlob;                   /* Total size of the blob */
-  int rc;                      /* sqlite error code */
+  sqlite3_int64 nWrite = toWrite;   /* Number of bytes to write */
+  sqlite3_int64 nBlob;              /* Total size of the blob */
+  int rc;                           /* sqlite error code */
 
   nBlob = sqlite3_blob_bytes(p->pBlob);
   if( (p->iSeek+nWrite)>nBlob ){
@@ -383,7 +391,7 @@ static int SQLITE_TCLAPI incrblobOutput(
     return 0;
   }
 
-  rc = sqlite3_blob_write(p->pBlob, (void *)buf, nWrite, p->iSeek);
+  rc = sqlite3_blob_write(p->pBlob, (void*)buf,(int)nWrite, (int)p->iSeek);
   if( rc!=SQLITE_OK ){
     *errorCodePtr = EIO;
     return -1;
@@ -393,12 +401,19 @@ static int SQLITE_TCLAPI incrblobOutput(
   return nWrite;
 }
 
+/* The datatype of Tcl_DriverWideSeekProc changes between tcl8.6 and tcl9.0 */
+#if TCL_MAJOR_VERSION==9
+# define WideSeekProcType long long
+#else
+# define WideSeekProcType Tcl_WideInt
+#endif
+
 /*
 ** Seek an incremental blob channel.
 */
-static Tcl_WideInt SQLITE_TCLAPI incrblobWideSeek(
-  void *instanceData,
-  Tcl_WideInt offset,
+static WideSeekProcType SQLITE_TCLAPI incrblobWideSeek(
+  ClientData instanceData,
+  WideSeekProcType offset,
   int seekMode,
   int *errorCodePtr
 ){
@@ -414,43 +429,24 @@ static Tcl_WideInt SQLITE_TCLAPI incrblobWideSeek(
     case SEEK_END:
       p->iSeek = sqlite3_blob_bytes(p->pBlob) + offset;
       break;
-    default:
-   	  *errorCodePtr = EINVAL;
-      return -1;
+
+    default: assert(!"Bad seekMode");
   }
 
   return p->iSeek;
 }
-
 static int SQLITE_TCLAPI incrblobSeek(
-  void *instanceData,
+  ClientData instanceData,
   long offset,
   int seekMode,
   int *errorCodePtr
 ){
-  IncrblobChannel *p = (IncrblobChannel *)instanceData;
-
-  switch( seekMode ){
-    case SEEK_SET:
-      p->iSeek = offset;
-      break;
-    case SEEK_CUR:
-      p->iSeek += offset;
-      break;
-    case SEEK_END:
-      p->iSeek = sqlite3_blob_bytes(p->pBlob) + offset;
-      break;
-    default:
-   	  *errorCodePtr = EINVAL;
-      return -1;
-  }
-
-  return p->iSeek;
+  return incrblobWideSeek(instanceData,offset,seekMode,errorCodePtr);
 }
 
 
 static void SQLITE_TCLAPI incrblobWatch(
-  void *instanceData,
+  ClientData instanceData,
   int mode
 ){
   (void)instanceData;
@@ -458,9 +454,9 @@ static void SQLITE_TCLAPI incrblobWatch(
   /* NO-OP */
 }
 static int SQLITE_TCLAPI incrblobHandle(
-  void *instanceData,
+  ClientData instanceData,
   int dir,
-  void **hPtr
+  ClientData *hPtr
 ){
   (void)instanceData;
   (void)dir;
@@ -513,13 +509,14 @@ static int createIncrblobChannel(
 
   rc = sqlite3_blob_open(db, zDb, zTable, zColumn, iRow, !isReadonly, &pBlob);
   if( rc!=SQLITE_OK ){
-    Tcl_AppendResult(interp, sqlite3_errmsg(pDb->db), (char*)0);
+    Tcl_SetResult(interp, (char *)sqlite3_errmsg(pDb->db), TCL_VOLATILE);
     return TCL_ERROR;
   }
 
   p = (IncrblobChannel *)Tcl_Alloc(sizeof(IncrblobChannel));
-  p->iSeek = 0;
+  memset(p, 0, sizeof(*p));
   p->pBlob = pBlob;
+  if( (flags & TCL_WRITABLE)==0 ) p->isClosed |= TCL_CLOSE_WRITE;
 
   sqlite3_snprintf(sizeof(zChannel), zChannel, "incrblob_%d", ++count);
   p->channel = Tcl_CreateChannel(&IncrblobChannelType, zChannel, p, flags);
@@ -534,7 +531,7 @@ static int createIncrblobChannel(
   pDb->pIncrblob = p;
   p->pDb = pDb;
 
-  Tcl_AppendResult(interp, Tcl_GetChannelName(p->channel), (char*)0);
+  Tcl_SetResult(interp, (char *)Tcl_GetChannelName(p->channel), TCL_VOLATILE);
   return TCL_OK;
 }
 #else  /* else clause for "#ifndef SQLITE_OMIT_INCRBLOB" */
@@ -1156,7 +1153,6 @@ static void tclSqlFunc(sqlite3_context *context, int argc, sqlite3_value**argv){
     u8 *data;
     const char *zType = (pVar->typePtr ? pVar->typePtr->name : "");
     char c = zType[0];
-
     int eType = p->eType;
 
     if( eType==SQLITE_NULL ){
@@ -1189,16 +1185,16 @@ static void tclSqlFunc(sqlite3_context *context, int argc, sqlite3_value**argv){
           sqlite3_result_int64(context, v);
           break;
         }
+        /* fall-through */
       }
-      /* FALLTHRU */
       case SQLITE_FLOAT: {
         double r;
         if( TCL_OK==Tcl_GetDoubleFromObj(0, pVar, &r) ){
           sqlite3_result_double(context, r);
           break;
         }
+        /* fall-through */
       }
-      /* FALLTHRU */
       default: {
         data = (unsigned char *)Tcl_GetStringFromObj(pVar, &n);
         sqlite3_result_text(context, (char *)data, n, SQLITE_TRANSIENT);
@@ -1361,7 +1357,7 @@ static char *local_getline(char *zPrompt, FILE *in){
 ** the transaction or savepoint opened by the [transaction] command.
 */
 static int SQLITE_TCLAPI DbTransPostCmd(
-  void *data[],                        /* data[0] is the Sqlite3Db* for $db */
+  ClientData data[],                   /* data[0] is the Sqlite3Db* for $db */
   Tcl_Interp *interp,                  /* Tcl interpreter */
   int result                           /* Result of evaluating SCRIPT */
 ){
@@ -1595,8 +1591,8 @@ static int dbPrepareAndBind(
           Tcl_GetWideIntFromObj(interp, pVar, &v);
           sqlite3_bind_int64(pStmt, i, v);
         }else{
-          data = (unsigned char *)Tcl_GetString(pVar);
-          sqlite3_bind_text(pStmt, i, (char *)data, pVar->length, SQLITE_STATIC);
+          data = (unsigned char *)Tcl_GetStringFromObj(pVar, &n);
+          sqlite3_bind_text(pStmt, i, (char *)data, n, SQLITE_STATIC);
           Tcl_IncrRefCount(pVar);
           pPreStmt->apParm[iParm++] = pVar;
         }
@@ -1943,7 +1939,7 @@ static int DbUseNre(void){
 **   $db eval SQL ?ARRAYNAME? SCRIPT
 */
 static int SQLITE_TCLAPI DbEvalNextCmd(
-  void *data[],                        /* data[0] is the (DbEvalContext*) */
+  ClientData data[],                   /* data[0] is the (DbEvalContext*) */
   Tcl_Interp *interp,                  /* Tcl interpreter */
   int result                           /* Result so far */
 ){
@@ -2104,7 +2100,7 @@ static int SQLITE_TCLAPI DbObjCmd(
     Tcl_WrongNumArgs(interp, 1, objv, "SUBCOMMAND ...");
     return TCL_ERROR;
   }
-  if( Tcl_GetIndexFromObjStruct(interp, objv[1], DB_strs, sizeof(char *), "option", 0, &choice) ){
+  if( Tcl_GetIndexFromObj(interp, objv[1], DB_strs, "option", 0, &choice) ){
     return TCL_ERROR;
   }
 
@@ -2399,7 +2395,7 @@ static int SQLITE_TCLAPI DbObjCmd(
     memcpy(pCollate->zScript, zScript, nScript+1);
     if( sqlite3_create_collation_v2(pDb->db, zName, SQLITE_UTF8,
         pCollate, tclSqlCollate, 0) ){
-      Tcl_AppendResult(interp, sqlite3_errmsg(pDb->db), (char*)0);
+      Tcl_SetResult(interp, (char *)sqlite3_errmsg(pDb->db), TCL_VOLATILE);
       return TCL_ERROR;
     }
     break;
@@ -2479,7 +2475,7 @@ static int SQLITE_TCLAPI DbObjCmd(
     }
     isComplete = sqlite3_complete( Tcl_GetString(objv[2]) );
     pResult = Tcl_GetObjResult(interp);
-    Tcl_SetWideIntObj(pResult, isComplete != 0);
+    Tcl_SetBooleanObj(pResult, isComplete);
 #endif
     break;
   }
@@ -2764,9 +2760,10 @@ static int SQLITE_TCLAPI DbObjCmd(
     Tcl_Obj *pValue = 0;
     unsigned char *pBA;
     unsigned char *pData;
-    int i, xrc;
-    Tcl_WideInt mxSize = 0;
     Tcl_Size len;
+    int xrc;
+    sqlite3_int64 mxSize = 0;
+    int i;
     int isReadonly = 0;
 
 
@@ -2799,7 +2796,7 @@ static int SQLITE_TCLAPI DbObjCmd(
     }
     pValue = objv[objc-1];
     pBA = Tcl_GetByteArrayFromObj(pValue, &len);
-    pData = sqlite3_malloc( len );
+    pData = sqlite3_malloc64( len );
     if( pData==0 && len>0 ){
       Tcl_AppendResult(interp, "out of memory", (char*)0);
       rc = TCL_ERROR;
@@ -2817,8 +2814,7 @@ static int SQLITE_TCLAPI DbObjCmd(
         rc = TCL_ERROR;
       }
       if( mxSize>0 ){
-        sqlite3_int64 size = (sqlite3_int64)mxSize;
-        sqlite3_file_control(pDb->db, zSchema,SQLITE_FCNTL_SIZE_LIMIT,&size);
+        sqlite3_file_control(pDb->db, zSchema,SQLITE_FCNTL_SIZE_LIMIT,&mxSize);
       }
     }
 deserialize_error:
@@ -3066,7 +3062,7 @@ deserialize_error:
         pFunc, tclSqlFunc, 0, 0, 0);
     if( rc!=SQLITE_OK ){
       rc = TCL_ERROR;
-      Tcl_AppendResult(interp, (char *)sqlite3_errmsg(pDb->db), (char*)0);
+      Tcl_SetResult(interp, (char *)sqlite3_errmsg(pDb->db), TCL_VOLATILE);
     }
     break;
   }
@@ -3791,7 +3787,7 @@ deserialize_error:
         char zBuf[100];
         sqlite3_snprintf(sizeof(zBuf), zBuf, "%p",
                          pDb->stmtList ? pDb->stmtList->pStmt: 0);
-        Tcl_AppendResult(interp, zBuf, (char*)0);
+        Tcl_SetResult(interp, zBuf, TCL_VOLATILE);
       }else
 #endif /* SQLITE_TEST */
       {
@@ -3800,7 +3796,7 @@ deserialize_error:
       }
     }
     if( i==2 ){   
-      Tcl_AppendResult(interp, sqlite3_libversion(), (char*)0);
+      Tcl_SetResult(interp, (char *)sqlite3_libversion(), TCL_STATIC);
     }
     break;
   }
@@ -3999,7 +3995,7 @@ static int SQLITE_TCLAPI DbMain(
     zErrMsg = sqlite3_mprintf("%s", sqlite3_errstr(rc));
   }
   if( p->db==0 ){
-    Tcl_AppendResult(interp, zErrMsg, (char*)0);
+    Tcl_SetResult(interp, zErrMsg, TCL_VOLATILE);
     Tcl_Free((char*)p);
     sqlite3_free(zErrMsg);
     return TCL_ERROR;
