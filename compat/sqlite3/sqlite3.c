@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.46.0.  By combining all the individual C code files into this
+** version 3.46.1.  By combining all the individual C code files into this
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -18,7 +18,7 @@
 ** separate file. This file contains only code for the core SQLite library.
 **
 ** The content in this amalgamation comes from Fossil check-in
-** 96c92aba00c8375bc32fafcdf12429c58bd8.
+** c9c2ab54ba1f5f46360f1b4f35d849cd3f08.
 */
 #define SQLITE_CORE 1
 #define SQLITE_AMALGAMATION 1
@@ -459,9 +459,9 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.46.0"
-#define SQLITE_VERSION_NUMBER 3046000
-#define SQLITE_SOURCE_ID      "2024-05-23 13:25:27 96c92aba00c8375bc32fafcdf12429c58bd8aabfcadab6683e35bbb9cdebf19e"
+#define SQLITE_VERSION        "3.46.1"
+#define SQLITE_VERSION_NUMBER 3046001
+#define SQLITE_SOURCE_ID      "2024-08-13 09:16:08 c9c2ab54ba1f5f46360f1b4f35d849cd3f080e6fc2b6c60e91b16c63f69a1e33"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -90173,7 +90173,8 @@ SQLITE_PRIVATE sqlite3_value *sqlite3VdbeGetBoundValue(Vdbe *v, int iVar, u8 aff
   assert( iVar>0 );
   if( v ){
     Mem *pMem = &v->aVar[iVar-1];
-    assert( (v->db->flags & SQLITE_EnableQPSG)==0 );
+    assert( (v->db->flags & SQLITE_EnableQPSG)==0
+         || (v->db->mDbFlags & DBFLAG_InternalFunc)!=0 );
     if( 0==(pMem->flags & MEM_Null) ){
       sqlite3_value *pRet = sqlite3ValueNew(v->db);
       if( pRet ){
@@ -90193,7 +90194,8 @@ SQLITE_PRIVATE sqlite3_value *sqlite3VdbeGetBoundValue(Vdbe *v, int iVar, u8 aff
 */
 SQLITE_PRIVATE void sqlite3VdbeSetVarmask(Vdbe *v, int iVar){
   assert( iVar>0 );
-  assert( (v->db->flags & SQLITE_EnableQPSG)==0 );
+  assert( (v->db->flags & SQLITE_EnableQPSG)==0
+       || (v->db->mDbFlags & DBFLAG_InternalFunc)!=0 );
   if( iVar>=32 ){
     v->expmask |= 0x80000000;
   }else{
@@ -106950,7 +106952,7 @@ static void extendFJMatch(
 static SQLITE_NOINLINE int isValidSchemaTableName(
   const char *zTab,         /* Name as it appears in the SQL */
   Table *pTab,              /* The schema table we are trying to match */
-  Schema *pSchema           /* non-NULL if a database qualifier is present */
+  const char *zDb           /* non-NULL if a database qualifier is present */
 ){
   const char *zLegacy;
   assert( pTab!=0 );
@@ -106961,7 +106963,7 @@ static SQLITE_NOINLINE int isValidSchemaTableName(
     if( sqlite3StrICmp(zTab+7, &PREFERRED_TEMP_SCHEMA_TABLE[7])==0 ){
       return 1;
     }
-    if( pSchema==0 ) return 0;
+    if( zDb==0 ) return 0;
     if( sqlite3StrICmp(zTab+7, &LEGACY_SCHEMA_TABLE[7])==0 ) return 1;
     if( sqlite3StrICmp(zTab+7, &PREFERRED_SCHEMA_TABLE[7])==0 ) return 1;
   }else{
@@ -107144,7 +107146,7 @@ static int lookupName(
             }
           }else if( sqlite3StrICmp(zTab, pTab->zName)!=0 ){
             if( pTab->tnum!=1 ) continue;
-            if( !isValidSchemaTableName(zTab, pTab, pSchema) ) continue;
+            if( !isValidSchemaTableName(zTab, pTab, zDb) ) continue;
           }
           assert( ExprUseYTab(pExpr) );
           if( IN_RENAME_OBJECT && pItem->zAlias ){
@@ -108876,6 +108878,9 @@ SQLITE_PRIVATE int sqlite3ResolveExprNames(
 ** Resolve all names for all expression in an expression list.  This is
 ** just like sqlite3ResolveExprNames() except that it works for an expression
 ** list rather than a single expression.
+**
+** The return value is SQLITE_OK (0) for success or SQLITE_ERROR (1) for a
+** failure.
 */
 SQLITE_PRIVATE int sqlite3ResolveExprListNames(
   NameContext *pNC,       /* Namespace to resolve expressions in. */
@@ -108884,7 +108889,7 @@ SQLITE_PRIVATE int sqlite3ResolveExprListNames(
   int i;
   int savedHasAgg = 0;
   Walker w;
-  if( pList==0 ) return WRC_Continue;
+  if( pList==0 ) return SQLITE_OK;
   w.pParse = pNC->pParse;
   w.xExprCallback = resolveExprStep;
   w.xSelectCallback = resolveSelectStep;
@@ -108898,7 +108903,7 @@ SQLITE_PRIVATE int sqlite3ResolveExprListNames(
 #if SQLITE_MAX_EXPR_DEPTH>0
     w.pParse->nHeight += pExpr->nHeight;
     if( sqlite3ExprCheckHeight(w.pParse, w.pParse->nHeight) ){
-      return WRC_Abort;
+      return SQLITE_ERROR;
     }
 #endif
     sqlite3WalkExprNN(&w, pExpr);
@@ -108915,10 +108920,10 @@ SQLITE_PRIVATE int sqlite3ResolveExprListNames(
                           (NC_HasAgg|NC_MinMaxAgg|NC_HasWin|NC_OrderAgg);
       pNC->ncFlags &= ~(NC_HasAgg|NC_MinMaxAgg|NC_HasWin|NC_OrderAgg);
     }
-    if( w.pParse->nErr>0 ) return WRC_Abort;
+    if( w.pParse->nErr>0 ) return SQLITE_ERROR;
   }
   pNC->ncFlags |= savedHasAgg;
-  return WRC_Continue;
+  return SQLITE_OK;
 }
 
 /*
@@ -117457,7 +117462,7 @@ static int renameResolveTrigger(Parse *pParse){
   /* ALWAYS() because if the table of the trigger does not exist, the
   ** error would have been hit before this point */
   if( ALWAYS(pParse->pTriggerTab) ){
-    rc = sqlite3ViewGetColumnNames(pParse, pParse->pTriggerTab);
+    rc = sqlite3ViewGetColumnNames(pParse, pParse->pTriggerTab)!=0;
   }
 
   /* Resolve symbols in WHEN clause */
@@ -133605,6 +133610,7 @@ SQLITE_PRIVATE Select *sqlite3MultiValues(Parse *pParse, Select *pLeft, ExprList
         pRet->pSrc->nSrc = 1;
         pRet->pPrior = pLeft->pPrior;
         pRet->op = pLeft->op;
+        if( pRet->pPrior ) pRet->selFlags |= SF_Values;
         pLeft->pPrior = 0;
         pLeft->op = TK_SELECT;
         assert( pLeft->pNext==0 );
@@ -166070,7 +166076,9 @@ static int whereLoopAddBtree(
                   " according to whereIsCoveringIndex()\n", pProbe->zName));
             }
           }
-        }else if( m==0 ){
+        }else if( m==0
+           && (HasRowid(pTab) || pWInfo->pSelect!=0 || sqlite3FaultSim(700))
+        ){
           WHERETRACE(0x200,
              ("-> %s a covering index according to bitmasks\n",
              pProbe->zName, m==0 ? "is" : "is not"));
@@ -169000,26 +169008,6 @@ whereBeginError:
   }
 #endif
 
-#ifdef SQLITE_DEBUG
-/*
-** Return true if cursor iCur is opened by instruction k of the
-** bytecode.  Used inside of assert() only.
-*/
-static int cursorIsOpen(Vdbe *v, int iCur, int k){
-  while( k>=0 ){
-    VdbeOp *pOp = sqlite3VdbeGetOp(v,k--);
-    if( pOp->p1!=iCur ) continue;
-    if( pOp->opcode==OP_Close ) return 0;
-    if( pOp->opcode==OP_OpenRead ) return 1;
-    if( pOp->opcode==OP_OpenWrite ) return 1;
-    if( pOp->opcode==OP_OpenDup ) return 1;
-    if( pOp->opcode==OP_OpenAutoindex ) return 1;
-    if( pOp->opcode==OP_OpenEphemeral ) return 1;
-  }
-  return 0;
-}
-#endif /* SQLITE_DEBUG */
-
 /*
 ** Generate the end of the WHERE loop.  See comments on
 ** sqlite3WhereBegin() for additional information.
@@ -169319,16 +169307,10 @@ SQLITE_PRIVATE void sqlite3WhereEnd(WhereInfo *pWInfo){
             ** reference.  Verify that this is harmless - that the
             ** table being referenced really is open.
             */
-#ifdef SQLITE_ENABLE_OFFSET_SQL_FUNC
-            assert( (pLoop->wsFlags & WHERE_IDX_ONLY)==0
-                 || cursorIsOpen(v,pOp->p1,k)
-                 || pOp->opcode==OP_Offset
-            );
-#else
-            assert( (pLoop->wsFlags & WHERE_IDX_ONLY)==0
-                 || cursorIsOpen(v,pOp->p1,k)
-            );
-#endif
+            if( pLoop->wsFlags & WHERE_IDX_ONLY ){
+              sqlite3ErrorMsg(pParse, "internal query planner error");
+              pParse->rc = SQLITE_INTERNAL;
+            }
           }
         }else if( pOp->opcode==OP_Rowid ){
           pOp->p1 = pLevel->iIdxCur;
@@ -172599,9 +172581,9 @@ static void updateDeleteLimitError(
           break;
         }
       }
-      if( (p->selFlags & SF_MultiValue)==0 &&
-        (mxSelect = pParse->db->aLimit[SQLITE_LIMIT_COMPOUND_SELECT])>0 &&
-        cnt>mxSelect
+      if( (p->selFlags & (SF_MultiValue|SF_Values))==0
+       && (mxSelect = pParse->db->aLimit[SQLITE_LIMIT_COMPOUND_SELECT])>0
+       && cnt>mxSelect
       ){
         sqlite3ErrorMsg(pParse, "too many terms in compound SELECT");
       }
@@ -237012,7 +236994,11 @@ static int sqlite3Fts5ExprNew(
   }
 
   sqlite3_free(sParse.apPhrase);
-  *pzErr = sParse.zErr;
+  if( 0==*pzErr ){
+    *pzErr = sParse.zErr;
+  }else{
+    sqlite3_free(sParse.zErr);
+  }
   return sParse.rc;
 }
 
@@ -239140,6 +239126,7 @@ static Fts5ExprNode *sqlite3Fts5ParseImplicitAnd(
     assert( pRight->eType==FTS5_STRING
         || pRight->eType==FTS5_TERM
         || pRight->eType==FTS5_EOF
+        || (pRight->eType==FTS5_AND && pParse->bPhraseToAnd)
     );
 
     if( pLeft->eType==FTS5_AND ){
@@ -252482,14 +252469,16 @@ static int sqlite3Fts5GetTokenizer(
   if( pMod==0 ){
     assert( nArg>0 );
     rc = SQLITE_ERROR;
-    *pzErr = sqlite3_mprintf("no such tokenizer: %s", azArg[0]);
+    if( pzErr ) *pzErr = sqlite3_mprintf("no such tokenizer: %s", azArg[0]);
   }else{
     rc = pMod->x.xCreate(
         pMod->pUserData, (azArg?&azArg[1]:0), (nArg?nArg-1:0), &pConfig->pTok
     );
     pConfig->pTokApi = &pMod->x;
     if( rc!=SQLITE_OK ){
-      if( pzErr ) *pzErr = sqlite3_mprintf("error in tokenizer constructor");
+      if( pzErr && rc!=SQLITE_NOMEM ){
+        *pzErr = sqlite3_mprintf("error in tokenizer constructor");
+      }
     }else{
       pConfig->ePattern = sqlite3Fts5TokenizerPattern(
           pMod->x.xCreate, pConfig->pTok
@@ -252548,7 +252537,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2024-05-23 13:25:27 96c92aba00c8375bc32fafcdf12429c58bd8aabfcadab6683e35bbb9cdebf19e", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2024-08-13 09:16:08 c9c2ab54ba1f5f46360f1b4f35d849cd3f080e6fc2b6c60e91b16c63f69a1e33", -1, SQLITE_TRANSIENT);
 }
 
 /*
@@ -252583,17 +252572,23 @@ static int fts5IntegrityMethod(
 
   assert( pzErr!=0 && *pzErr==0 );
   UNUSED_PARAM(isQuick);
+  assert( pTab->p.pConfig->pzErrmsg==0 );
+  pTab->p.pConfig->pzErrmsg = pzErr;
   rc = sqlite3Fts5StorageIntegrity(pTab->pStorage, 0);
-  if( (rc&0xff)==SQLITE_CORRUPT ){
-    *pzErr = sqlite3_mprintf("malformed inverted index for FTS5 table %s.%s",
-                zSchema, zTabname);
-     rc = (*pzErr) ? SQLITE_OK : SQLITE_NOMEM;
-  }else if( rc!=SQLITE_OK ){
-    *pzErr = sqlite3_mprintf("unable to validate the inverted index for"
-                             " FTS5 table %s.%s: %s",
-                zSchema, zTabname, sqlite3_errstr(rc));
+  if( *pzErr==0 && rc!=SQLITE_OK ){
+    if( (rc&0xff)==SQLITE_CORRUPT ){
+      *pzErr = sqlite3_mprintf("malformed inverted index for FTS5 table %s.%s",
+          zSchema, zTabname);
+      rc = (*pzErr) ? SQLITE_OK : SQLITE_NOMEM;
+    }else{
+      *pzErr = sqlite3_mprintf("unable to validate the inverted index for"
+          " FTS5 table %s.%s: %s",
+          zSchema, zTabname, sqlite3_errstr(rc));
+    }
   }
+
   sqlite3Fts5IndexCloseReader(pTab->p.pIndex);
+  pTab->p.pConfig->pzErrmsg = 0;
 
   return rc;
 }
@@ -254027,7 +254022,7 @@ static int fts5AsciiCreate(
       int i;
       memset(p, 0, sizeof(AsciiTokenizer));
       memcpy(p->aTokenChar, aAsciiTokenChar, sizeof(aAsciiTokenChar));
-      for(i=0; rc==SQLITE_OK && i<nArg; i+=2){
+      for(i=0; rc==SQLITE_OK && i<nArg-1; i+=2){
         const char *zArg = azArg[i+1];
         if( 0==sqlite3_stricmp(azArg[i], "tokenchars") ){
           fts5AsciiAddExceptions(p, zArg, 1);
@@ -254038,6 +254033,7 @@ static int fts5AsciiCreate(
           rc = SQLITE_ERROR;
         }
       }
+      if( rc==SQLITE_OK && i<nArg ) rc = SQLITE_ERROR;
       if( rc!=SQLITE_OK ){
         fts5AsciiDelete((Fts5Tokenizer*)p);
         p = 0;
@@ -254329,17 +254325,16 @@ static int fts5UnicodeCreate(
       }
 
       /* Search for a "categories" argument */
-      for(i=0; rc==SQLITE_OK && i<nArg; i+=2){
+      for(i=0; rc==SQLITE_OK && i<nArg-1; i+=2){
         if( 0==sqlite3_stricmp(azArg[i], "categories") ){
           zCat = azArg[i+1];
         }
       }
-
       if( rc==SQLITE_OK ){
         rc = unicodeSetCategories(p, zCat);
       }
 
-      for(i=0; rc==SQLITE_OK && i<nArg; i+=2){
+      for(i=0; rc==SQLITE_OK && i<nArg-1; i+=2){
         const char *zArg = azArg[i+1];
         if( 0==sqlite3_stricmp(azArg[i], "remove_diacritics") ){
           if( (zArg[0]!='0' && zArg[0]!='1' && zArg[0]!='2') || zArg[1] ){
@@ -254364,6 +254359,7 @@ static int fts5UnicodeCreate(
           rc = SQLITE_ERROR;
         }
       }
+      if( i<nArg && rc==SQLITE_OK ) rc = SQLITE_ERROR;
 
     }else{
       rc = SQLITE_NOMEM;
@@ -255246,7 +255242,7 @@ static int fts5TriCreate(
     int i;
     pNew->bFold = 1;
     pNew->iFoldParam = 0;
-    for(i=0; rc==SQLITE_OK && i<nArg; i+=2){
+    for(i=0; rc==SQLITE_OK && i<nArg-1; i+=2){
       const char *zArg = azArg[i+1];
       if( 0==sqlite3_stricmp(azArg[i], "case_sensitive") ){
         if( (zArg[0]!='0' && zArg[0]!='1') || zArg[1] ){
@@ -255264,6 +255260,7 @@ static int fts5TriCreate(
         rc = SQLITE_ERROR;
       }
     }
+    if( i<nArg && rc==SQLITE_OK ) rc = SQLITE_ERROR;
 
     if( pNew->iFoldParam!=0 && pNew->bFold==0 ){
       rc = SQLITE_ERROR;
