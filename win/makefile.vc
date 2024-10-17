@@ -34,7 +34,7 @@ $(TMP_DIR)\sqlite3Uuid.h:	$(ROOT)\manifest.uuid
 	copy $(WIN_DIR)\sqlite3Uuid.h.in+$(ROOT)\manifest.uuid $(TMP_DIR)\sqlite3Uuid.h
 
 # Preprocessor macros specific to sqlite3.
-PRJ_DEFINES = -D_CRT_SECURE_NO_DEPRECATE -D_CRT_NONSTDC_NO_DEPRECATE \
+PRJ_DEFINES = -I"$(ROOT)\.." -D_CRT_SECURE_NO_DEPRECATE -D_CRT_NONSTDC_NO_DEPRECATE \
                   -DSQLITE_ENABLE_DBPAGE_VTAB=1 -DSQLITE_ENABLE_DBSTAT_VTAB=1 \
                   -DSQLITE_ENABLE_FTS3_PARENTHESIS=1 -DSQLITE_ENABLE_FTS4=1 \
                   -DSQLITE_ENABLE_FTS5=1 -DSQLITE_ENABLE_COLUMN_METADATA=1 \

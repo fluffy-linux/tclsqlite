@@ -959,7 +959,7 @@ static void DbPreUpdateHandler(
 ){
   SqliteDb *pDb = (SqliteDb *)p;
   Tcl_Obj *pCmd;
-  static const char azStr[][8] = {"DELETE", "INSERT", "UPDATE"};
+  static const char *azStr[] = {"DELETE", "INSERT", "UPDATE"};
 
   assert( (SQLITE_DELETE-1)/9 == 0 );
   assert( (SQLITE_INSERT-1)/9 == 1 );
@@ -989,7 +989,7 @@ static void DbUpdateHandler(
 ){
   SqliteDb *pDb = (SqliteDb *)p;
   Tcl_Obj *pCmd;
-  static const char azStr[][8] = {"DELETE", "INSERT", "UPDATE"};
+  static const char *azStr[] = {"DELETE", "INSERT", "UPDATE"};
 
   assert( (SQLITE_DELETE-1)/9 == 0 );
   assert( (SQLITE_INSERT-1)/9 == 1 );
@@ -1045,7 +1045,7 @@ static int tclSqlCollate(
   Tcl_ListObjAppendElement(p->interp, pCmd, Tcl_NewStringObj((const char *)zB, nB));
   Tcl_EvalObjEx(p->interp, pCmd, TCL_EVAL_DIRECT);
   Tcl_DecrRefCount(pCmd);
-  return (atoi(Tcl_GetString(Tcl_GetObjResult(p->interp))));
+  return (atoi(Tcl_GetStringResult(p->interp)));
 }
 
 /*
@@ -1098,7 +1098,11 @@ static void tclSqlFunc(sqlite3_context *context, int argc, sqlite3_value**argv){
         }
         case SQLITE_INTEGER: {
           sqlite_int64 v = sqlite3_value_int64(pIn);
-          pVal = Tcl_NewWideIntObj(v);
+          if( v>=-2147483647 && v<=2147483647 ){
+            pVal = Tcl_NewIntObj((int)v);
+          }else{
+            pVal = Tcl_NewWideIntObj(v);
+          }
           break;
         }
         case SQLITE_FLOAT: {
@@ -1272,7 +1276,7 @@ static int auth_callback(
 #ifdef SQLITE_USER_AUTHENTICATION
   Tcl_DStringAppendElement(&str, zArg5 ? zArg5 : "");
 #endif
-  rc = Tcl_EvalEx(pDb->interp, Tcl_DStringValue(&str), -1, TCL_EVAL_GLOBAL);
+  rc = Tcl_GlobalEval(pDb->interp, Tcl_DStringValue(&str));
   Tcl_DStringFree(&str);
   zReply = rc==TCL_OK ? Tcl_GetStringResult(pDb->interp) : "SQLITE_DENY";
   if( strcmp(zReply,"SQLITE_OK")==0 ){
@@ -1878,7 +1882,11 @@ static Tcl_Obj *dbEvalColumnValue(DbEvalContext *p, int iCol){
     }
     case SQLITE_INTEGER: {
       sqlite_int64 v = sqlite3_column_int64(pStmt, iCol);
-      return Tcl_NewWideIntObj(v);
+      if( v>=-2147483647 && v<=2147483647 ){
+        return Tcl_NewIntObj((int)v);
+      }else{
+        return Tcl_NewWideIntObj(v);
+      }
     }
     case SQLITE_FLOAT: {
       return Tcl_NewDoubleObj(sqlite3_column_double(pStmt, iCol));
@@ -2050,7 +2058,7 @@ static int SQLITE_TCLAPI DbObjCmd(
   SqliteDb *pDb = (SqliteDb*)cd;
   int choice;
   int rc = TCL_OK;
-  static const char *const DB_strs[] = {
+  static const char *DB_strs[] = {
     "authorizer",             "backup",                "bind_fallback",
     "busy",                   "cache",                 "changes",
     "close",                  "collate",               "collation_needed",
@@ -2497,7 +2505,7 @@ static int SQLITE_TCLAPI DbObjCmd(
         { "writable_schema",    SQLITE_DBCONFIG_WRITABLE_SCHEMA       },
     };
     Tcl_Obj *pResult;
-    size_t ii;
+    int ii;
     if( objc>4 ){
       Tcl_WrongNumArgs(interp, 2, objv, "?OPTION? ?BOOLEAN?");
       return TCL_ERROR;
@@ -2652,7 +2660,7 @@ static int SQLITE_TCLAPI DbObjCmd(
       sqlite3_finalize(pStmt);
       return TCL_ERROR;
     }
-    in = Tcl_OpenFileChannel(interp, zFile, "r", 0666);
+    in = Tcl_OpenFileChannel(interp, zFile, "rb", 0666);
     if( in==0 ){
       sqlite3_finalize(pStmt);
       return TCL_ERROR;
@@ -2697,7 +2705,8 @@ static int SQLITE_TCLAPI DbObjCmd(
       }
       for(i=0; i<nCol; i++){
         /* check for null data, if so, bind as null */
-        if( (azCol[i][0]==0) || (nNull>0 && strcmp(azCol[i], zNull)==0)
+        if( (nNull>0 && strcmp(azCol[i], zNull)==0)
+          || strlen30(azCol[i])==0
         ){
           sqlite3_bind_null(pStmt, i+1);
         }else{
@@ -2722,7 +2731,7 @@ static int SQLITE_TCLAPI DbObjCmd(
     if( zCommit[0] == 'C' ){
       /* success, set result as number of lines processed */
       pResult = Tcl_GetObjResult(interp);
-      Tcl_SetWideIntObj(pResult, lineno);
+      Tcl_SetIntObj(pResult, lineno);
       rc = TCL_OK;
     }else{
       /* failure, append lineno where failed */
@@ -3015,7 +3024,7 @@ deserialize_error:
         flags |= SQLITE_INNOCUOUS;
       }else
       if( n>1 && strncmp(z, "-returntype", n)==0 ){
-        const char *const azType[] = {"integer", "real", "text", "blob", "any", 0};
+        const char *azType[] = {"integer", "real", "text", "blob", "any", 0};
         assert( SQLITE_INTEGER==1 && SQLITE_FLOAT==2 && SQLITE_TEXT==3 );
         assert( SQLITE_BLOB==4 && SQLITE_NULL==5 );
         if( i==(objc-2) ){
@@ -3473,7 +3482,7 @@ deserialize_error:
       Tcl_Size len;
       Tcl_WideInt wMask = 0;
       if( objc==4 ){
-        static const char *const TTYPE_strs[] = {
+        static const char *TTYPE_strs[] = {
           "statement", "profile", "row", "close", 0
         };
         enum TTYPE_enum {
@@ -3556,7 +3565,7 @@ deserialize_error:
     }
 
     if( pDb->nTransaction==0 && objc==4 ){
-      static const char *const TTYPE_strs[] = {
+      static const char *TTYPE_strs[] = {
         "deferred",   "exclusive",  "immediate", 0
       };
       enum TTYPE_enum {
@@ -3649,7 +3658,7 @@ deserialize_error:
                      (char*)0);
     rc = TCL_ERROR;
 #else
-    static const char *const azSub[] = {"count", "depth", "hook", "new", "old", 0};
+    static const char *azSub[] = {"count", "depth", "hook", "new", "old", 0};
     enum DbPreupdateSubCmd {
       PRE_COUNT, PRE_DEPTH, PRE_HOOK, PRE_NEW, PRE_OLD
     };
@@ -4124,17 +4133,28 @@ DLLEXPORT int Tclsqlite3_Unload(Tcl_Interp *interp, int flags){ (void)interp;(vo
 DLLEXPORT int Sqlite3_SafeInit(Tcl_Interp *interp){ (void)interp;return TCL_ERROR; }
 DLLEXPORT int Sqlite3_SafeUnload(Tcl_Interp *interp, int flags){(void)interp;(void)flags;return TCL_ERROR;}
 
+/*
+** Versions of all of the above entry points that omit the "3" at the end
+** of the name.  Years ago (circa 2004) the "3" was necessary to distinguish
+** SQLite version 3 from Sqlite version 2.  But two decades have elapsed.
+** SQLite2 is not longer a conflict.  So it is ok to omit the "3".
+**
+** Omitting the "3" helps TCL find the entry point.
+*/
+DLLEXPORT int Sqlite_Init(Tcl_Interp *interp){ return Sqlite3_Init(interp);}
+DLLEXPORT int Tclsqlite_Init(Tcl_Interp *interp){ return Sqlite3_Init(interp); }
+DLLEXPORT int Sqlite_Unload(Tcl_Interp *interp, int flags){ return TCL_OK; }
+DLLEXPORT int Tclsqlite_Unload(Tcl_Interp *interp, int flags){ return TCL_OK; }
+DLLEXPORT int Sqlite_SafeInit(Tcl_Interp *interp){ return TCL_ERROR; }
+DLLEXPORT int Sqlite_SafeUnload(Tcl_Interp *interp, int flags){return TCL_ERROR;}
 
-
-#ifndef SQLITE_3_SUFFIX_ONLY
-int Sqlite_Init(Tcl_Interp *interp){ return Sqlite3_Init(interp); }
-int Tclsqlite_Init(Tcl_Interp *interp){ return Sqlite3_Init(interp); }
-int Sqlite_Unload(Tcl_Interp *interp, int flags){ return TCL_OK; }
-int Tclsqlite_Unload(Tcl_Interp *interp, int flags){ return TCL_OK; }
-#endif
+/* Also variants with a lowercase "s" */
+DLLEXPORT int sqlite3_Init(Tcl_Interp *interp){ return Sqlite3_Init(interp);}
+DLLEXPORT int sqlite_Init(Tcl_Interp *interp){ return Sqlite3_Init(interp);}
 #ifdef __cplusplus
 }
 #endif  /* __cplusplus */
+
 
 /*
 ** If the TCLSH macro is defined, add code to make a stand-alone program.
@@ -4244,7 +4264,7 @@ int SQLITE_CDECL TCLSH_MAIN(int argc, char **argv){
   if( zScript==0 ){
     zScript = tclsh_main_loop();
   }
-  if( Tcl_EvalEx(interp, zScript, -1, TCL_EVAL_GLOBAL)!=TCL_OK ){
+  if( Tcl_GlobalEval(interp, zScript)!=TCL_OK ){
     const char *zInfo = Tcl_GetVar(interp, "errorInfo", TCL_GLOBAL_ONLY);
     if( zInfo==0 ) zInfo = Tcl_GetStringResult(interp);
     fprintf(stderr,"%s: %s\n", *argv, zInfo);
