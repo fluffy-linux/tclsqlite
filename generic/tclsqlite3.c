@@ -546,15 +546,13 @@ static int createIncrblobChannel(
 ** or {...} or ; to be seen anywhere.  Most callback scripts consist
 ** of just a single procedure name and they meet this requirement.
 */
-static int safeToUseEvalObjv(Tcl_Interp *dummy, Tcl_Obj *pCmd){
+static int safeToUseEvalObjv(Tcl_Obj *pCmd){
   /* We could try to do something with Tcl_Parse().  But we will instead
   ** just do a search for forbidden characters.  If any of the forbidden
   ** characters appear in pCmd, we will report the string as unsafe.
   */
   const char *z;
   Tcl_Size n;
-  (void)dummy;
-
   z = Tcl_GetStringFromObj(pCmd, &n);
   while( n-- > 0 ){
     int c = *(z++);
@@ -908,7 +906,7 @@ static int DbWalHandler(
   p = Tcl_DuplicateObj(pDb->pWalHook);
   Tcl_IncrRefCount(p);
   Tcl_ListObjAppendElement(interp, p, Tcl_NewStringObj(zDb, -1));
-  Tcl_ListObjAppendElement(interp, p, Tcl_NewWideIntObj(nEntry));
+  Tcl_ListObjAppendElement(interp, p, Tcl_NewIntObj(nEntry));
   if( TCL_OK!=(rc=Tcl_EvalObjEx(interp, p, 0))
    || TCL_OK!=(rc=Tcl_GetIntFromObj(interp, Tcl_GetObjResult(interp), &ret))
   ){
@@ -2514,7 +2512,7 @@ static int SQLITE_TCLAPI DbObjCmd(
         Tcl_ListObjAppendElement(interp, pResult,
            Tcl_NewStringObj(aDbConfig[ii].zName,-1));
         Tcl_ListObjAppendElement(interp, pResult,
-           Tcl_NewWideIntObj(v));
+           Tcl_NewIntObj(v));
       }
     }else{
       const char *zOpt = Tcl_GetString(objv[2]);
@@ -2535,7 +2533,7 @@ static int SQLITE_TCLAPI DbObjCmd(
         }
       }
       sqlite3_db_config(pDb->db, aDbConfig[ii].op, onoff, &v);
-      pResult = Tcl_NewWideIntObj(v);
+      pResult = Tcl_NewIntObj(v);
     }
     Tcl_SetObjResult(interp, pResult);
     break;
@@ -2845,7 +2843,7 @@ deserialize_error:
   ** call to sqlite3_exec().
   */
   case DB_ERRORCODE: {
-    Tcl_SetObjResult(interp, Tcl_NewWideIntObj(sqlite3_errcode(pDb->db)));
+    Tcl_SetObjResult(interp, Tcl_NewIntObj(sqlite3_errcode(pDb->db)));
     break;
   }
 
@@ -2856,7 +2854,7 @@ deserialize_error:
   ** call to sqlite3_exec().
   */
   case DB_ERROROFFSET: {
-    Tcl_SetObjResult(interp, Tcl_NewWideIntObj(sqlite3_error_offset(pDb->db)));
+    Tcl_SetObjResult(interp, Tcl_NewIntObj(sqlite3_error_offset(pDb->db)));
     break;
   }
 
@@ -3047,7 +3045,7 @@ deserialize_error:
     }
     pFunc->pScript = pScript;
     Tcl_IncrRefCount(pScript);
-    pFunc->useEvalObjv = safeToUseEvalObjv(interp, pScript);
+    pFunc->useEvalObjv = safeToUseEvalObjv(pScript);
     pFunc->eType = eType;
     rc = sqlite3_create_function_v2(pDb->db, zName, nArg, flags,
         pFunc, tclSqlFunc, 0, 0, 0);
@@ -3380,7 +3378,7 @@ deserialize_error:
             (char*)0);
       return TCL_ERROR;
     }
-    Tcl_SetObjResult(interp, Tcl_NewWideIntObj(v));
+    Tcl_SetObjResult(interp, Tcl_NewIntObj(v));
     break;
   }
 
@@ -3667,7 +3665,7 @@ deserialize_error:
     switch( (enum DbPreupdateSubCmd)iSub ){
       case PRE_COUNT: {
         int nCol = sqlite3_preupdate_count(pDb->db);
-        Tcl_SetObjResult(interp, Tcl_NewWideIntObj(nCol));
+        Tcl_SetObjResult(interp, Tcl_NewIntObj(nCol));
         break;
       }
 
@@ -3686,7 +3684,7 @@ deserialize_error:
           Tcl_WrongNumArgs(interp, 3, objv, "");
           return TCL_ERROR;
         }
-        pRet = Tcl_NewWideIntObj(sqlite3_preupdate_depth(pDb->db));
+        pRet = Tcl_NewIntObj(sqlite3_preupdate_depth(pDb->db));
         Tcl_SetObjResult(interp, pRet);
         break;
       }
