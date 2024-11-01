@@ -1,7 +1,7 @@
 This is the SQLite extension for Tcl using the Tcl Extension
 Architecture (TEA).  For additional information on SQLite see
 
-        http://www.sqlite.org/
+	http://www.sqlite.org/
 
 
 UNIX BUILD
