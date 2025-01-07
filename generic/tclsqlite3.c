@@ -114,7 +114,7 @@
 # define Tcl_BackgroundException(interp, result) (DbUseNre()? \
     ((void (*)(Tcl_Interp *, int))((&(tclStubsPtr->tcl_PkgProvideEx))[609]))((interp), (result)): \
     ((void (*)(Tcl_Interp *))((&(tclStubsPtr->tcl_PkgProvideEx))[76]))(interp))
-#elif TCL_MAJOR_VERSION==8 && TCL_MINOR_VERSION<6
+#elif TCL_MAJOR_VERSION==8 && defined(TCL_MINOR_VERSION) && TCL_MINOR_VERSION<6
 # define Tcl_BackgroundException(interp, result) Tcl_BackgroundError(interp)
 #endif /* USE_TCL_STUBS */
 
@@ -146,7 +146,7 @@ typedef struct SqliteDb SqliteDb;
 ** Variable eType may be set to SQLITE_INTEGER, SQLITE_FLOAT, SQLITE_TEXT,
 ** SQLITE_BLOB or SQLITE_NULL. If it is SQLITE_NULL, then the implementation
 ** attempts to determine the type of the result based on the Tcl object.
-** If it is SQLITE_TEXT or SQLITE_BLOB, then a text (sqlite3_result_text64())
+** If it is SQLITE_TEXT or SQLITE_BLOB, then a text (sqlite3_result_text())
 ** or blob (sqlite3_result_blob()) is returned. If it is SQLITE_INTEGER
 ** or SQLITE_FLOAT, then an attempt is made to return an integer or float
 ** value, falling back to float and then text if this is not possible.
@@ -1182,7 +1182,8 @@ static void tclSqlFunc(sqlite3_context *context, int argc, sqlite3_value**argv){
       }
       default: {
         data = (unsigned char *)Tcl_GetStringFromObj(pVar, &n);
-        sqlite3_result_text64(context, (char *)data, n, SQLITE_TRANSIENT, SQLITE_UTF8);
+        sqlite3_result_text64(context, (char *)data, n, SQLITE_TRANSIENT,
+                              SQLITE_UTF8);
         break;
       }
     }
@@ -1571,7 +1572,8 @@ static int dbPrepareAndBind(
           sqlite3_bind_int64(pStmt, i, v);
         }else{
           data = (unsigned char *)Tcl_GetStringFromObj(pVar, &n);
-          sqlite3_bind_text64(pStmt, i, (char *)data, n, SQLITE_STATIC, SQLITE_UTF8);
+          sqlite3_bind_text64(pStmt, i, (char *)data, n, SQLITE_STATIC,
+                              SQLITE_UTF8);
           Tcl_IncrRefCount(pVar);
           pPreStmt->apParm[iParm++] = pVar;
         }
@@ -1893,7 +1895,8 @@ static Tcl_Obj *dbEvalColumnValue(DbEvalContext *p, int iCol){
 ** are 8.6 or newer, the code still tests the Tcl version at runtime.
 ** This allows stubs-enabled builds to be used with older Tcl libraries.
 */
-#if TCL_MAJOR_VERSION>8 || !defined(TCL_MINOR_VERSION) || (TCL_MINOR_VERSION>=6)
+#if TCL_MAJOR_VERSION>8 || !defined(TCL_MINOR_VERSION) \
+                        || TCL_MINOR_VERSION>=6
 # define SQLITE_TCL_NRE 1
 static int DbUseNre(void){
   int major, minor;
@@ -2697,7 +2700,7 @@ static int SQLITE_TCLAPI DbObjCmd(
         ){
           sqlite3_bind_null(pStmt, i+1);
         }else{
-          sqlite3_bind_text64(pStmt, i+1, azCol[i], -1, SQLITE_STATIC, SQLITE_UTF8);
+          sqlite3_bind_text(pStmt, i+1, azCol[i], -1, SQLITE_STATIC);
         }
       }
       sqlite3_step(pStmt);
