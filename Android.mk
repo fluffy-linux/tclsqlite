@@ -67,7 +67,7 @@ LOCAL_CFLAGS := $(tcl_cflags) \
 	-DHAVE_LOG2=0 \
 	-DU_LIB_SUFFIX_C_NAME=_sqlite3 \
 	-DPACKAGE_NAME="\"sqlite\"" \
-	-DPACKAGE_VERSION="\"3.47.2\"" \
+	-DPACKAGE_VERSION="\"3.48.0\"" \
 	-DBUILD_sqlite=1 \
 	-Dmain=sqlite3_shell \
 	-O2
