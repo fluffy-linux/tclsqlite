@@ -17,7 +17,7 @@ proc is_without_rowid {tname} {
     if {$o(origin) == "pk"} {
       set n $o(name)
       if {0==[db one { SELECT count(*) FROM sqlite_schema WHERE name=$n }]} {
-        return 1
+	return 1
       }
     }
   }
@@ -39,9 +39,9 @@ proc tclsh {} {
     append line [gets stdin]
     if {[info complete $line]} {
       if {[catch {uplevel #0 $line} result]} {
-        puts stderr "Error: $result"
+	puts stderr "Error: $result"
       } elseif {$result!=""} {
-        puts $result
+	puts $result
       }
       set line {}
     } else {
@@ -66,7 +66,7 @@ Options:
    --pageinfo   Show how each page of the database-file is used
 
    --stats      Output SQL text that creates a new database containing
-                statistics about the database that was analyzed
+		statistics about the database that was analyzed
 
    --tclsh      Run the built-in TCL interpreter interactively (for debugging)
 
@@ -162,11 +162,11 @@ if {$flags(-debug)} {
 # Make sure all required compile-time options are available
 #
 if {![db exists {SELECT 1 FROM pragma_compile_options
-                WHERE compile_options='ENABLE_DBSTAT_VTAB'}]} {
+		WHERE compile_options='ENABLE_DBSTAT_VTAB'}]} {
   puts "The SQLite database engine linked with this application\
-        lacks required capabilities. Recompile using the\
-        -DSQLITE_ENABLE_DBSTAT_VTAB compile-time option to fix\
-        this problem."
+	lacks required capabilities. Recompile using the\
+	-DSQLITE_ENABLE_DBSTAT_VTAB compile-time option to fix\
+	this problem."
   exit_clean 1
 }
 
@@ -196,15 +196,15 @@ if {$flags(-stats)} {
   puts "  pgsize     INTEGER           /* Size of the page */"
   puts ");"
   db eval {SELECT quote(name) || ',' ||
-                  quote(path) || ',' ||
-                  quote(pageno) || ',' ||
-                  quote(pagetype) || ',' ||
-                  quote(ncell) || ',' ||
-                  quote(payload) || ',' ||
-                  quote(unused) || ',' ||
-                  quote(mx_payload) || ',' ||
-                  quote(pgoffset) || ',' ||
-                  quote(pgsize) AS x FROM stat} {
+		  quote(path) || ',' ||
+		  quote(pageno) || ',' ||
+		  quote(pagetype) || ',' ||
+		  quote(ncell) || ',' ||
+		  quote(payload) || ',' ||
+		  quote(unused) || ',' ||
+		  quote(mx_payload) || ',' ||
+		  quote(pgoffset) || ',' ||
+		  quote(pgsize) AS x FROM stat} {
     puts "INSERT INTO stats VALUES($x);"
   }
   puts "COMMIT;"
@@ -249,7 +249,7 @@ mem eval $tabledef
 #
 db eval {CREATE VIRTUAL TABLE temp.stat USING dbstat}
 db eval {CREATE TEMP TABLE dbstat AS SELECT * FROM temp.stat
-         ORDER BY name, path}
+	 ORDER BY name, path}
 db eval {DROP TABLE temp.stat}
 
 set isCompressed 0
@@ -276,7 +276,7 @@ foreach {name tblname} [concat sqlite_schema sqlite_schema [db eval $sql]] {
       sum((pagetype=='overflow') * unused) AS ovfl_unused,
       sum(pgsize) AS compressed_size,
       max((length(CASE WHEN path LIKE '%+%' THEN '' ELSE path END)+3)/4)
-        AS depth
+	AS depth
     FROM temp.dbstat WHERE name = $name
   } break
 
@@ -355,7 +355,7 @@ proc titleline {title} {
     puts [string repeat * 79]
   } else {
     set len [string length $title]
-    set stars [string repeat * [expr {79-$len-5}]]
+    set stars [string repeat * [expr 79-$len-5]]
     puts "*** $title $stars"
   }
 }
@@ -365,7 +365,7 @@ proc titleline {title} {
 #
 proc statline {title value {extra {}}} {
   set len [string length $title]
-  set dots [string repeat . [expr {50-$len}]]
+  set dots [string repeat . [expr 50-$len]]
   set len [string length $value]
   set sp2 [string range {          } $len end]
   if {$extra ne ""} {
@@ -391,7 +391,7 @@ proc percent {num denom {of {}}} {
 
 proc divide {num denom} {
   if {$denom==0} {return 0.0}
-  return [format %.2f [expr {double($num)/double($denom)}]]
+  return [format %.2f [expr double($num)/double($denom)]]
 }
 
 # Generate a subreport that covers some subset of the database.
@@ -411,9 +411,9 @@ proc subreport {title where showFrag} {
   mem eval "
     SELECT
       int(sum(
-        CASE WHEN (is_without_rowid OR is_index) THEN nentry 
-             ELSE leaf_entries 
-        END
+	CASE WHEN (is_without_rowid OR is_index) THEN nentry 
+	     ELSE leaf_entries 
+	END
       )) AS nentry,
       int(sum(payload)) AS payload,
       int(sum(ovfl_payload)) AS ovfl_payload,
@@ -465,12 +465,12 @@ proc subreport {title where showFrag} {
     # TODO: Is this formula correct?
     set nTab [mem eval "
       SELECT count(*) FROM (
-          SELECT DISTINCT tblname FROM space_used WHERE $where AND is_index=0
+	  SELECT DISTINCT tblname FROM space_used WHERE $where AND is_index=0
       )
     "]
     set avg_fanout [mem eval "
       SELECT (sum(leaf_pages+int_pages)-$nTab)/sum(int_pages) FROM space_used
-          WHERE $where
+	  WHERE $where
     "]
     set avg_fanout [format %.2f $avg_fanout]
   }
@@ -510,7 +510,7 @@ proc subreport {title where showFrag} {
   statline {Total pages used} $total_pages
   if {$int_unused>0} {
     set int_unused_percent [
-         percent $int_unused [expr {$int_pages*$pageSize}] {of index space}]
+	 percent $int_unused [expr {$int_pages*$pageSize}] {of index space}]
     statline "Unused bytes on index pages" $int_unused $int_unused_percent
   }
   statline "Unused bytes on primary pages" $leaf_unused [
@@ -518,7 +518,7 @@ proc subreport {title where showFrag} {
   statline "Unused bytes on overflow pages" $ovfl_unused [
      percent $ovfl_unused [expr {$ovfl_pages*$pageSize}] {of overflow space}]
   statline "Unused bytes on all pages" $total_unused [
-               percent $total_unused $storage {of all space}]
+	       percent $total_unused $storage {of all space}]
   return 1
 }
 
@@ -543,10 +543,10 @@ proc autovacuum_overhead {filePages pageSize} {
   # database file is one pointer-map page, followed by $ptrsPerPage other
   # pages, followed by a pointer-map page etc. The first pointer-map page
   # is the second page of the file overall.
-  set ptrsPerPage [expr {double($pageSize/5)}]
+  set ptrsPerPage [expr double($pageSize/5)]
 
   # Return the number of pointer map pages in the database.
-  return [expr {wide(ceil(($filePages-1.0)/($ptrsPerPage+1.0)))}]
+  return [expr wide(ceil( ($filePages-1.0)/($ptrsPerPage+1.0) ))]
 }
 
 
@@ -587,7 +587,7 @@ set av_pgcnt    [autovacuum_overhead $file_pgcnt $pageSize]
 set av_percent  [percent $av_pgcnt $file_pgcnt]
 
 set sql {SELECT sum(leaf_pages+int_pages+ovfl_pages) FROM space_used}
-set inuse_pgcnt   [expr {wide([mem eval $sql])}]
+set inuse_pgcnt   [expr wide([mem eval $sql])]
 set inuse_percent [percent $inuse_pgcnt $file_pgcnt]
 
 set free_pgcnt    [expr {$file_pgcnt-$inuse_pgcnt-$av_pgcnt}]
@@ -644,8 +644,8 @@ puts ""
 titleline "Page counts for all tables with their indices"
 puts ""
 mem eval {SELECT tblname, count(*) AS cnt, 
-              int(sum(int_pages+leaf_pages+ovfl_pages)) AS size
-          FROM space_used GROUP BY tblname ORDER BY size+0 DESC, tblname} {} {
+	      int(sum(int_pages+leaf_pages+ovfl_pages)) AS size
+	  FROM space_used GROUP BY tblname ORDER BY size+0 DESC, tblname} {} {
   statline [string toupper $tblname] $size [percent $size $file_pgcnt]
 }
 puts ""
@@ -665,10 +665,10 @@ if {$isCompressed} {
   puts ""
   set csum 0
   mem eval {SELECT tblname,
-                  int(sum(compressed_size)) +
-                         $compressOverhead*sum(int_pages+leaf_pages+ovfl_pages)
-                        AS csize
-          FROM space_used GROUP BY tblname ORDER BY csize+0 DESC, tblname} {} {
+		  int(sum(compressed_size)) +
+			 $compressOverhead*sum(int_pages+leaf_pages+ovfl_pages)
+			AS csize
+	  FROM space_used GROUP BY tblname ORDER BY csize+0 DESC, tblname} {} {
     incr csum $csize
     statline [string toupper $tblname] $csize [percent $csize $true_file_size]
   }
@@ -687,7 +687,7 @@ subreport {All tables} {NOT is_index} 0
 if {$nwithoutrowid>0} {
   subreport {All WITHOUT ROWID tables} {is_without_rowid} 0
   set nrowidtab [db eval {SELECT count(*) FROM pragma_table_list
-                         WHERE type='table' AND NOT wr}]
+			 WHERE type='table' AND NOT wr}]
   if {$nrowidtab>0} {
      subreport {ALL rowid tables} {NOT is_without_rowid AND NOT is_index} 0
   }
@@ -696,14 +696,14 @@ if {$nindex>0} {
   subreport {All indices} {is_index} 0
 }
 foreach tbl [mem eval {SELECT DISTINCT tblname name FROM space_used
-                       ORDER BY name}] {
+		       ORDER BY name}] {
   set qn [quote $tbl]
   set name [string toupper $tbl]
   set n [mem eval {SELECT count(*) FROM space_used WHERE tblname=$tbl}]
   if {$n>1} {
     set idxlist [mem eval "SELECT name FROM space_used
-                            WHERE tblname='$qn' AND is_index
-                            ORDER BY 1"]
+			    WHERE tblname='$qn' AND is_index
+			    ORDER BY 1"]
     subreport "Table $name and all its indices" "tblname='$qn'" 0
     subreport "Table $name w/o any indices" "name='$qn'" 1
     if {[llength $idxlist]>1} {

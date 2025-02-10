@@ -5320,7 +5320,7 @@ static u8* fromBase64( char *pIn, int ncIn, u8 *pOut ){
       deliberate_fall_through; /* FALLTHRU */
     case 1:
       pOut[0] = (qv>>16) & 0xff;
-      deliberate_fall_through; /* FALLTHRU */
+      break;
     }
     pOut += nbo;
   }
@@ -28891,6 +28891,9 @@ static int do_meta_command(char *zLine, ShellState *p){
       const char *zName;
       int op;
     } aDbConfig[] = {
+        { "attach_create",      SQLITE_DBCONFIG_ENABLE_ATTACH_CREATE  },
+        { "attach_write",       SQLITE_DBCONFIG_ENABLE_ATTACH_WRITE   },
+        { "comments",           SQLITE_DBCONFIG_ENABLE_COMMENTS       },
         { "defensive",          SQLITE_DBCONFIG_DEFENSIVE             },
         { "dqs_ddl",            SQLITE_DBCONFIG_DQS_DDL               },
         { "dqs_dml",            SQLITE_DBCONFIG_DQS_DML               },
@@ -31641,6 +31644,7 @@ static int do_meta_command(char *zLine, ShellState *p){
             { 0x04000000, 1, "NullUnusedCols" },
             { 0x08000000, 1, "OnePass" },
             { 0x10000000, 1, "OrderBySubq" },
+            { 0x20000000, 1, "StarQuery" },
             { 0xffffffff, 0, "All" },
           };
           unsigned int curOpt;
