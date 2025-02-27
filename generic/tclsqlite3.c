@@ -82,13 +82,6 @@
 #     define SQLITE_PTRSIZE 8
 #   endif
 # endif /* SQLITE_PTRSIZE */
-# if defined(HAVE_STDINT_H)
-    typedef uintptr_t uptr;
-# elif SQLITE_PTRSIZE==4
-    typedef unsigned int uptr;
-# else
-    typedef sqlite3_uint64 uptr;
-# endif
 #endif
 #include <ctype.h>
 
@@ -114,7 +107,7 @@
 # define Tcl_BackgroundException(interp, result) (DbUseNre()? \
     ((void (*)(Tcl_Interp *, int))((&(tclStubsPtr->tcl_PkgProvideEx))[609]))((interp), (result)): \
     ((void (*)(Tcl_Interp *))((&(tclStubsPtr->tcl_PkgProvideEx))[76]))(interp))
-#elif TCL_MAJOR_VERSION==8 && defined(TCL_MINOR_VERSION) && TCL_MINOR_VERSION<6
+#elif (TCL_MAJOR_VERSION==8) && defined(TCL_MINOR_VERSION) && (TCL_MINOR_VERSION<6)
 # define Tcl_BackgroundException(interp, result) Tcl_BackgroundError(interp)
 #endif /* USE_TCL_STUBS */
 
@@ -772,7 +765,7 @@ static int DbTraceV2Handler(
       pCmd = Tcl_NewStringObj(pDb->zTraceV2, -1);
       Tcl_IncrRefCount(pCmd);
       Tcl_ListObjAppendElement(pDb->interp, pCmd,
-                               Tcl_NewWideIntObj((Tcl_WideInt)(uptr)pStmt));
+                               Tcl_NewWideIntObj((Tcl_WideInt)(size_t)pStmt));
       Tcl_ListObjAppendElement(pDb->interp, pCmd,
                                Tcl_NewStringObj(zSql, -1));
       Tcl_EvalObjEx(pDb->interp, pCmd, TCL_EVAL_DIRECT);
@@ -787,7 +780,7 @@ static int DbTraceV2Handler(
       pCmd = Tcl_NewStringObj(pDb->zTraceV2, -1);
       Tcl_IncrRefCount(pCmd);
       Tcl_ListObjAppendElement(pDb->interp, pCmd,
-                               Tcl_NewWideIntObj((Tcl_WideInt)(uptr)pStmt));
+                               Tcl_NewWideIntObj((Tcl_WideInt)(size_t)pStmt));
       Tcl_ListObjAppendElement(pDb->interp, pCmd,
                                Tcl_NewWideIntObj((Tcl_WideInt)ns));
       Tcl_EvalObjEx(pDb->interp, pCmd, TCL_EVAL_DIRECT);
@@ -801,7 +794,7 @@ static int DbTraceV2Handler(
       pCmd = Tcl_NewStringObj(pDb->zTraceV2, -1);
       Tcl_IncrRefCount(pCmd);
       Tcl_ListObjAppendElement(pDb->interp, pCmd,
-                               Tcl_NewWideIntObj((Tcl_WideInt)(uptr)pStmt));
+                               Tcl_NewWideIntObj((Tcl_WideInt)(size_t)pStmt));
       Tcl_EvalObjEx(pDb->interp, pCmd, TCL_EVAL_DIRECT);
       Tcl_DecrRefCount(pCmd);
       Tcl_ResetResult(pDb->interp);
@@ -813,7 +806,7 @@ static int DbTraceV2Handler(
       pCmd = Tcl_NewStringObj(pDb->zTraceV2, -1);
       Tcl_IncrRefCount(pCmd);
       Tcl_ListObjAppendElement(pDb->interp, pCmd,
-                               Tcl_NewWideIntObj((Tcl_WideInt)(uptr)db));
+                               Tcl_NewWideIntObj((Tcl_WideInt)(size_t)db));
       Tcl_EvalObjEx(pDb->interp, pCmd, TCL_EVAL_DIRECT);
       Tcl_DecrRefCount(pCmd);
       Tcl_ResetResult(pDb->interp);
@@ -2702,7 +2695,7 @@ static int SQLITE_TCLAPI DbObjCmd(
         ){
           sqlite3_bind_null(pStmt, i+1);
         }else{
-          sqlite3_bind_text(pStmt, i+1, azCol[i], -1, SQLITE_STATIC);
+          sqlite3_bind_text64(pStmt, i+1, azCol[i], -1, SQLITE_STATIC, SQLITE_UTF8);
         }
       }
       sqlite3_step(pStmt);
@@ -4140,7 +4133,9 @@ DLLEXPORT int Tclsqlite_Unload(Tcl_Interp *interp, int flags){ return TCL_OK; }
 DLLEXPORT int Sqlite_SafeInit(Tcl_Interp *interp){ return TCL_ERROR; }
 DLLEXPORT int Sqlite_SafeUnload(Tcl_Interp *interp, int flags){return TCL_ERROR;}
 
-/* Also variants with a lowercase "s" */
+/* Also variants with a lowercase "s".  I'm told that these are
+** deprecated in Tcl9, but they continue to be included for backwards
+** compatibility. */
 DLLEXPORT int sqlite3_Init(Tcl_Interp *interp){ return Sqlite3_Init(interp);}
 DLLEXPORT int sqlite_Init(Tcl_Interp *interp){ return Sqlite3_Init(interp);}
 #ifdef __cplusplus
