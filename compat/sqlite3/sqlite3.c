@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.50.2.  By combining all the individual C code files into this
+** version 3.50.3.  By combining all the individual C code files into this
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -18,7 +18,7 @@
 ** separate file. This file contains only code for the core SQLite library.
 **
 ** The content in this amalgamation comes from Fossil check-in
-** 2af157d77fb1304a74176eaee7fbc7c7e932 with changes in files:
+** 3ce993b8657d6d9deda380a93cdd6404a8c8 with changes in files:
 **
 **    
 */
@@ -467,9 +467,9 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.50.2"
-#define SQLITE_VERSION_NUMBER 3050002
-#define SQLITE_SOURCE_ID      "2025-06-28 14:00:48 2af157d77fb1304a74176eaee7fbc7c7e932d946bf25325e9c26c91db19e3079"
+#define SQLITE_VERSION        "3.50.3"
+#define SQLITE_VERSION_NUMBER 3050003
+#define SQLITE_SOURCE_ID      "2025-07-17 13:25:10 3ce993b8657d6d9deda380a93cdd6404a8c8ba1b185b2bc423703e41ae5f2543"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -246396,7 +246396,7 @@ static void fts5SegIterSetNext(Fts5Index *p, Fts5SegIter *pIter){
 static void fts5SegIterAllocTombstone(Fts5Index *p, Fts5SegIter *pIter){
   const int nTomb = pIter->pSeg->nPgTombstone;
   if( nTomb>0 ){
-    int nByte = SZ_FTS5TOMBSTONEARRAY(nTomb+1);
+    size_t nByte = SZ_FTS5TOMBSTONEARRAY(nTomb+1);
     Fts5TombstoneArray *pNew;
     pNew = (Fts5TombstoneArray*)sqlite3Fts5MallocZero(&p->rc, nByte);
     if( pNew ){
@@ -257497,7 +257497,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2025-06-28 14:00:48 2af157d77fb1304a74176eaee7fbc7c7e932d946bf25325e9c26c91db19e3079", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2025-07-17 13:25:10 3ce993b8657d6d9deda380a93cdd6404a8c8ba1b185b2bc423703e41ae5f2543", -1, SQLITE_TRANSIENT);
 }
 
 /*
