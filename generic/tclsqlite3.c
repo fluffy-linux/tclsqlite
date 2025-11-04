@@ -54,6 +54,10 @@
 # define CONST const
 #elif !defined(Tcl_Size)
   typedef int Tcl_Size;
+# ifndef Tcl_BounceRefCount
+#  define Tcl_BounceRefCount(X) Tcl_IncrRefCount(X); Tcl_DecrRefCount(X)
+   /* https://www.tcl-lang.org/man/tcl9.0/TclLib/Object.html */
+# endif
 #endif
 # ifndef Tcl_BounceRefCount
 #  define Tcl_BounceRefCount(X) Tcl_IncrRefCount(X); Tcl_DecrRefCount(X)
@@ -1949,7 +1953,7 @@ static int DbUseNre(void){
 /*
 ** This function is part of the implementation of the command:
 **
-**   $db eval SQL ?ARRAYNAME? SCRIPT
+**   $db eval SQL ?TGT-NAME? SCRIPT
 */
 static int SQLITE_TCLAPI DbEvalNextCmd(
   ClientData data[],                   /* data[0] is the (DbEvalContext*) */
