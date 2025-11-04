@@ -24890,7 +24890,7 @@ SQLITE_API int sqlite3_db_status64(
     */
     case SQLITE_DBSTATUS_SCHEMA_USED: {
       int i;          /* Used to iterate through schemas */
-      size_t nByte = 0;  /* Used to accumulate return value */
+      size_t nByte = 0;           /* Used to accumulate return value */
 
       sqlite3BtreeEnterAll(db);
       db->pnBytesFreed = &nByte;
@@ -52009,7 +52009,7 @@ static void *winConvertFromUtf8Filename(const char *zFilename){
     if( nChar==0 ){
       return 0;
     }
-    zWideFilename = sqlite3MallocZero( nChar*sizeof(WCHAR)+12 );
+    zWideFilename = sqlite3Malloc( nChar*sizeof(WCHAR)+12 );
     if( zWideFilename==0 ){
       return 0;
     }
@@ -230625,7 +230625,7 @@ SQLITE_PRIVATE int sqlite3DbpageRegister(sqlite3 *db){ return SQLITE_OK; }
 /*
 ** Names of allowed datatypes
 */
-static const char *azCarrayType[] = {
+static const char *const azCarrayType[] = {
   "int32", "int64", "double", "char*", "struct iovec"
 };
 
@@ -230650,7 +230650,7 @@ struct carray_cursor {
   sqlite3_vtab_cursor base;  /* Base class - must be first */
   sqlite3_int64 iRowid;      /* The rowid */
   void *pPtr;                /* Pointer to the array of values */
-  sqlite3_int64 iCnt;        /* Number of integers in the array */
+  size_t iCnt;               /* Number of integers in the array */
   unsigned char eType;       /* One of the CARRAY_type values */
 };
 
@@ -230936,7 +230936,7 @@ static int carrayBestIndex(
 ** This following structure defines all the methods for the
 ** carray virtual table.
 */
-static sqlite3_module carrayModule = {
+static const sqlite3_module carrayModule = {
   0,                         /* iVersion */
   0,                         /* xCreate */
   carrayConnect,             /* xConnect */
@@ -249349,7 +249349,7 @@ static void fts5SegIterSetNext(Fts5Index *p, Fts5SegIter *pIter){
 ** leave an error in the Fts5Index object.
 */
 static void fts5SegIterAllocTombstone(Fts5Index *p, Fts5SegIter *pIter){
-  const int nTomb = pIter->pSeg->nPgTombstone;
+  const size_t nTomb = (size_t)pIter->pSeg->nPgTombstone;
   if( nTomb>0 ){
     size_t nByte = SZ_FTS5TOMBSTONEARRAY(nTomb+1);
     Fts5TombstoneArray *pNew;

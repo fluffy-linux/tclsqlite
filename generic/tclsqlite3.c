@@ -54,15 +54,11 @@
 # define CONST const
 #elif !defined(Tcl_Size)
   typedef int Tcl_Size;
-# ifndef Tcl_BounceRefCount
-#  define Tcl_BounceRefCount(X) Tcl_IncrRefCount(X); Tcl_DecrRefCount(X)
-   /* https://www.tcl-lang.org/man/tcl9.0/TclLib/Object.html */
-# endif
 #endif
-# ifndef Tcl_BounceRefCount
-#  define Tcl_BounceRefCount(X) Tcl_IncrRefCount(X); Tcl_DecrRefCount(X)
+#ifndef Tcl_BounceRefCount
+# define Tcl_BounceRefCount(X) Tcl_IncrRefCount(X); Tcl_DecrRefCount(X)
    /* https://www.tcl-lang.org/man/tcl9.0/TclLib/Object.html */
-# endif
+#endif
 /**** End copy of tclsqlite.h ****/
 
 #include <errno.h>
@@ -2636,10 +2632,11 @@ static int SQLITE_TCLAPI DbObjCmd(
     Tcl_Obj *pResult;           /* interp result */
 
     const char *zSep;
+    const char *zEnc = NULL;
     const char *zNull;
-    if( objc<5 || objc>7 ){
+    if( objc<5 || objc>8 ){
       Tcl_WrongNumArgs(interp, 2, objv,
-         "CONFLICT-ALGORITHM TABLE FILENAME ?SEPARATOR? ?NULLINDICATOR?");
+         "CONFLICT-ALGORITHM TABLE FILENAME ?SEPARATOR? ?NULLINDICATOR? ?ENCODING?");
       return TCL_ERROR;
     }
     if( objc>=6 ){
@@ -2651,6 +2648,9 @@ static int SQLITE_TCLAPI DbObjCmd(
       zNull = Tcl_GetStringFromObj(objv[6], 0);
     }else{
       zNull = "";
+    }
+    if( objc>=8 ){
+      zEnc = Tcl_GetStringFromObj(objv[7], 0);
     }
     zConflict = Tcl_GetStringFromObj(objv[2], 0);
     zTable = Tcl_GetStringFromObj(objv[3], 0);
@@ -2717,6 +2717,10 @@ static int SQLITE_TCLAPI DbObjCmd(
       return TCL_ERROR;
     }
     Tcl_SetChannelOption(NULL, in, "-translation", "auto");
+    if (zEnc && *zEnc && Tcl_SetChannelOption(interp, in, "-encoding", zEnc) != TCL_OK) {
+        sqlite3_finalize(pStmt);
+        return TCL_ERROR;
+    }
     azCol = malloc( sizeof(azCol[0])*(nCol+1) );
     if( azCol==0 ) {
       Tcl_AppendResult(interp, "Error: can't malloc()", (char*)0);
@@ -2729,9 +2733,12 @@ static int SQLITE_TCLAPI DbObjCmd(
     zCommit = "COMMIT";
     while( Tcl_GetsObj(in, str)>=0 ) {
       char *z;
-      Tcl_Size byteLen;
       lineno++;
-      zLine = (char *)Tcl_GetByteArrayFromObj(str, &byteLen);
+      if (zEnc && *zEnc) {
+          zLine = Tcl_GetString(str);
+      }else {
+          zLine = (char *)Tcl_GetByteArrayFromObj(str, NULL);
+      }
       azCol[0] = zLine;
       for(i=0, z=zLine; *z; z++){
         if( *z==zSep[0] && strncmp(z, zSep, nSep)==0 ){
