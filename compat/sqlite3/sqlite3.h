@@ -148,10 +148,10 @@ extern "C" {
 */
 #define SQLITE_VERSION        "3.51.0"
 #define SQLITE_VERSION_NUMBER 3051000
-#define SQLITE_SOURCE_ID      "2025-11-03 15:34:25 ccabbe06d4e0650eecc91296d6a3040ed7fef06b47e4d63393a2367c8c8f55cf"
+#define SQLITE_SOURCE_ID      "2025-11-05 07:29:25 8a2d2690fc9c3f88e2e0fae6c50e01fd60b8920b895a3e876fe7db0c084fe8b6"
 #define SQLITE_SCM_BRANCH     "trunk"
 #define SQLITE_SCM_TAGS       ""
-#define SQLITE_SCM_DATETIME   "2025-11-03T15:34:25.507Z"
+#define SQLITE_SCM_DATETIME   "2025-11-05T07:29:25.507Z"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
