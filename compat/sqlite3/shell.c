@@ -3517,19 +3517,19 @@ static int uintCollFunc(
   (void)notUsed;
   while( i<nKey1 && j<nKey2 ){
     x = zA[i] - zB[j];
-    if( isdigit(zA[i]) ){
+    if( IsDigit(zA[i]) ){
       int k;
-      if( !isdigit(zB[j]) ) return x;
+      if( !IsDigit(zB[j]) ) return x;
       while( i<nKey1 && zA[i]=='0' ){ i++; }
       while( j<nKey2 && zB[j]=='0' ){ j++; }
       k = 0;
-      while( i+k<nKey1 && isdigit(zA[i+k])
-             && j+k<nKey2 && isdigit(zB[j+k]) ){
+      while( i+k<nKey1 && IsDigit(zA[i+k])
+             && j+k<nKey2 && IsDigit(zB[j+k]) ){
         k++;
       }
-      if( i+k<nKey1 && isdigit(zA[i+k]) ){
+      if( i+k<nKey1 && IsDigit(zA[i+k]) ){
         return +1;
-      }else if( j+k<nKey2 && isdigit(zB[j+k]) ){
+      }else if( j+k<nKey2 && IsDigit(zB[j+k]) ){
         return -1;
       }else{
         x = memcmp(zA+i, zB+j, k);
@@ -5028,7 +5028,7 @@ static u8* fromBase85( char *pIn, int ncIn, u8 *pOut ){
 static int allBase85( char *p, int len ){
   char c;
   while( len-- > 0 && (c = *p++) != 0 ){
-    if( !IS_B85(c) && !isspace(c) ) return 0;
+    if( !IS_B85(c) && !IsSpace(c) ) return 0;
   }
   return 1;
 }
@@ -14921,6 +14921,7 @@ static char *intckMprintf(sqlite3_intck *p, const char *zFmt, ...){
     sqlite3_free(zRet);
     zRet = 0;
   }
+  va_end(ap);
   return zRet;
 }
 
@@ -29032,6 +29033,7 @@ static int do_meta_command(char *zLine, ShellState *p){
     }
     p->showHeader = savedShowHeader;
     p->shellFlgs = savedShellFlags;
+    rc = p->nErr>0;
   }else
 
   if( c=='e' && cli_strncmp(azArg[0], "echo", n)==0 ){

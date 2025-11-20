@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.51.0.  By combining all the individual C code files into this
+** version 3.51.1.  By combining all the individual C code files into this
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -469,11 +469,11 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.51.0"
-#define SQLITE_VERSION_NUMBER 3051000
+#define SQLITE_VERSION        "3.51.1"
+#define SQLITE_VERSION_NUMBER 3051001
 #define SQLITE_SOURCE_ID      "2025-11-04 19:38:17 fb2c931ae597f8d00a37574ff67aeed3eced4e5547f9120744ae4bfa8e74527b"
-#define SQLITE_SCM_BRANCH     "trunk"
-#define SQLITE_SCM_TAGS       "release major-release version-3.51.0"
+#define SQLITE_SCM_BRANCH     "branch-3.51"
+#define SQLITE_SCM_TAGS       "release major-release version-3.51.1"
 #define SQLITE_SCM_DATETIME   "2025-11-04T19:38:17.314Z"
 
 /*
@@ -10763,7 +10763,7 @@ SQLITE_API int sqlite3_vtab_in(sqlite3_index_info*, int iCons, int bHandle);
 ** &nbsp;  ){
 ** &nbsp;    // do something with pVal
 ** &nbsp;  }
-** &nbsp;  if( rc!=SQLITE_OK ){
+** &nbsp;  if( rc!=SQLITE_DONE ){
 ** &nbsp;    // an error has occurred
 ** &nbsp;  }
 ** </pre></blockquote>)^
@@ -15045,6 +15045,7 @@ SQLITE_PRIVATE void sqlite3HashInit(Hash*);
 SQLITE_PRIVATE void *sqlite3HashInsert(Hash*, const char *pKey, void *pData);
 SQLITE_PRIVATE void *sqlite3HashFind(const Hash*, const char *pKey);
 SQLITE_PRIVATE void sqlite3HashClear(Hash*);
+SQLITE_PRIVATE void sqlite3HashTransfer(Hash*, Hash*, HashElem *pElem);
 
 /*
 ** Macros for looping over all elements of a hash table.  The idiom is
@@ -38086,6 +38087,29 @@ SQLITE_PRIVATE void *sqlite3HashInsert(Hash *pH, const char *pKey, void *data){
   insertElement(pH, pH->ht ? &pH->ht[new_elem->h % pH->htsize] : 0, new_elem);
   return 0;
 }
+
+/*
+** Parameter pElem is currently part of hash table pFrom. Add it to hash
+** table pTo.
+**
+** This procedure corrupts hash table pFrom. Specifically, it removes element
+** pElem from the list of all elements in the hash table, but may leave
+** a pointer to it in one of the hash buckets of pFrom. This is not a problem
+** because this function is only called if hash table pFrom will be cleared
+** before any further lookups or inserts are attempted.
+*/
+SQLITE_PRIVATE void sqlite3HashTransfer(Hash *pTo, Hash *pFrom, HashElem *pElem){
+  if( pElem->prev ){
+    pElem->prev->next = pElem->next;
+  }else{
+    assert( pFrom->first==pElem );
+    pFrom->first = pElem->next;
+  }
+  pTo->count++;
+  insertElement(pTo, pTo->ht ? &pTo->ht[pElem->h % pTo->htsize] : 0, pElem);
+}
+
+
 
 /************** End of hash.c ************************************************/
 /************** Begin file opcodes.c *****************************************/
@@ -130719,8 +130743,16 @@ SQLITE_PRIVATE void sqlite3SchemaClear(void *p){
   temp2 = pSchema->trigHash;
   sqlite3HashInit(&pSchema->trigHash);
   sqlite3HashClear(&pSchema->idxHash);
-  for(pElem=sqliteHashFirst(&temp2); pElem; pElem=sqliteHashNext(pElem)){
-    sqlite3DeleteTrigger(&xdb, (Trigger*)sqliteHashData(pElem));
+  for(pElem=sqliteHashFirst(&temp2); pElem; ){
+    HashElem *pNext = sqliteHashNext(pElem);
+    Trigger *pTrig = (Trigger*)sqliteHashData(pElem);
+    if( pTrig->bReturning ){
+      /* Do not remove RETURNING triggers from the temp-triggers hash */
+      sqlite3HashTransfer(&pSchema->trigHash, &temp2, pElem);
+    }else{
+      sqlite3DeleteTrigger(&xdb, pTrig);
+    }
+    pElem = pNext;
   }
   sqlite3HashClear(&temp2);
   sqlite3HashInit(&pSchema->tblHash);
@@ -174135,8 +174167,22 @@ SQLITE_PRIVATE void sqlite3WhereEnd(WhereInfo *pWInfo){
         sqlite3VdbeAddOp2(v, OP_Goto, 1, pLevel->p2);
       }
 #endif /* SQLITE_DISABLE_SKIPAHEAD_DISTINCT */
-      if( pTabList->a[pLevel->iFrom].fg.fromExists ){
-        sqlite3VdbeAddOp2(v, OP_Goto, 0, sqlite3VdbeCurrentAddr(v)+2);
+      if( pTabList->a[pLevel->iFrom].fg.fromExists && i==pWInfo->nLevel-1 ){
+        /* If the EXISTS-to-JOIN optimization was applied, then the EXISTS
+        ** loop(s) will be the inner-most loops of the join. There might be
+        ** multiple EXISTS loops, but they will all be nested, and the join
+        ** order will not have been changed by the query planner.  If the
+        ** inner-most EXISTS loop sees a single successful row, it should
+        ** break out of *all* EXISTS loops.  But only the inner-most of the
+        ** nested EXISTS loops should do this breakout. */
+        int nOuter = 0; /* Nr of outer EXISTS that this one is nested within */
+        while( nOuter<i ){
+          if( !pTabList->a[pLevel[-nOuter-1].iFrom].fg.fromExists ) break;
+          nOuter++;
+        }
+        testcase( nOuter>0 );
+        sqlite3VdbeAddOp2(v, OP_Goto, 0, pLevel[-nOuter].addrBrk);
+        VdbeComment((v, "EXISTS break"));
       }
       /* The common case: Advance to the next row */
       if( pLevel->addrCont ) sqlite3VdbeResolveLabel(v, pLevel->addrCont);
@@ -186350,6 +186396,7 @@ SQLITE_PRIVATE void sqlite3LeaveMutexAndCloseZombie(sqlite3 *db){
   /* Clear the TEMP schema separately and last */
   if( db->aDb[1].pSchema ){
     sqlite3SchemaClear(db->aDb[1].pSchema);
+    assert( db->aDb[1].pSchema->trigHash.count==0 );
   }
   sqlite3VtabUnlockList(db);
 
@@ -187680,7 +187727,7 @@ SQLITE_API const char *sqlite3_errmsg(sqlite3 *db){
 */
 SQLITE_API int sqlite3_set_errmsg(sqlite3 *db, int errcode, const char *zMsg){
   int rc = SQLITE_OK;
-  if( !sqlite3SafetyCheckSickOrOk(db) ){
+  if( !sqlite3SafetyCheckOk(db) ){
     return SQLITE_MISUSE_BKPT;
   }
   sqlite3_mutex_enter(db->mutex);
