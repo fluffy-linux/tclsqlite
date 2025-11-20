@@ -146,11 +146,11 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.51.0"
-#define SQLITE_VERSION_NUMBER 3051000
+#define SQLITE_VERSION        "3.51.1"
+#define SQLITE_VERSION_NUMBER 3051001
 #define SQLITE_SOURCE_ID      "2025-11-03 15:34:25 ccabbe06d4e0650eecc91296d6a3040ed7fef06b47e4d63393a2367c8c8f55cf"
 #define SQLITE_SCM_BRANCH     "trunk"
-#define SQLITE_SCM_TAGS       ""
+#define SQLITE_SCM_TAGS       "release major-release version-3.51.1"
 #define SQLITE_SCM_DATETIME   "2025-11-03T15:34:25.507Z"
 
 /*
