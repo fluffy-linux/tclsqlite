@@ -18,7 +18,7 @@
 ** separate file. This file contains only code for the core SQLite library.
 **
 ** The content in this amalgamation comes from Fossil check-in
-** fb2c931ae597f8d00a37574ff67aeed3eced with changes in files:
+** 281fc0e9afc38674b9b0991943b9e9d1e64c with changes in files:
 **
 **    
 */
@@ -469,10 +469,10 @@ extern "C" {
 */
 #define SQLITE_VERSION        "3.51.1"
 #define SQLITE_VERSION_NUMBER 3051001
-#define SQLITE_SOURCE_ID      "2025-11-04 19:38:17 fb2c931ae597f8d00a37574ff67aeed3eced4e5547f9120744ae4bfa8e74527b"
+#define SQLITE_SOURCE_ID      "2025-11-28 17:28:25 281fc0e9afc38674b9b0991943b9e9d1e64c6cbdb133d35f6f5c87ff6af38a88"
 #define SQLITE_SCM_BRANCH     "branch-3.51"
-#define SQLITE_SCM_TAGS       "release major-release version-3.51.1"
-#define SQLITE_SCM_DATETIME   "2025-11-04T19:38:17.314Z"
+#define SQLITE_SCM_TAGS       "release version-3.51.1"
+#define SQLITE_SCM_DATETIME   "2025-11-28T17:28:25.933Z"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -15022,7 +15022,6 @@ SQLITE_PRIVATE void sqlite3HashInit(Hash*);
 SQLITE_PRIVATE void *sqlite3HashInsert(Hash*, const char *pKey, void *pData);
 SQLITE_PRIVATE void *sqlite3HashFind(const Hash*, const char *pKey);
 SQLITE_PRIVATE void sqlite3HashClear(Hash*);
-SQLITE_PRIVATE void sqlite3HashTransfer(Hash*, Hash*, HashElem *pElem);
 
 /*
 ** Macros for looping over all elements of a hash table.  The idiom is
@@ -38004,28 +38003,6 @@ SQLITE_PRIVATE void *sqlite3HashInsert(Hash *pH, const char *pKey, void *data){
   insertElement(pH, pH->ht ? &pH->ht[new_elem->h % pH->htsize] : 0, new_elem);
   return 0;
 }
-
-/*
-** Parameter pElem is currently part of hash table pFrom. Add it to hash
-** table pTo.
-**
-** This procedure corrupts hash table pFrom. Specifically, it removes element
-** pElem from the list of all elements in the hash table, but may leave
-** a pointer to it in one of the hash buckets of pFrom. This is not a problem
-** because this function is only called if hash table pFrom will be cleared
-** before any further lookups or inserts are attempted.
-*/
-SQLITE_PRIVATE void sqlite3HashTransfer(Hash *pTo, Hash *pFrom, HashElem *pElem){
-  if( pElem->prev ){
-    pElem->prev->next = pElem->next;
-  }else{
-    assert( pFrom->first==pElem );
-    pFrom->first = pElem->next;
-  }
-  pTo->count++;
-  insertElement(pTo, pTo->ht ? &pTo->ht[pElem->h % pTo->htsize] : 0, pElem);
-}
-
 
 
 /************** End of hash.c ************************************************/
@@ -130676,17 +130653,10 @@ SQLITE_PRIVATE void sqlite3SchemaClear(void *p){
   temp2 = pSchema->trigHash;
   sqlite3HashInit(&pSchema->trigHash);
   sqlite3HashClear(&pSchema->idxHash);
-  for(pElem=sqliteHashFirst(&temp2); pElem; ){
-    HashElem *pNext = sqliteHashNext(pElem);
-    Trigger *pTrig = (Trigger*)sqliteHashData(pElem);
-    if( pTrig->bReturning ){
-      /* Do not remove RETURNING triggers from the temp-triggers hash */
-      sqlite3HashTransfer(&pSchema->trigHash, &temp2, pElem);
-    }else{
-      sqlite3DeleteTrigger(&xdb, pTrig);
-    }
-    pElem = pNext;
+  for(pElem=sqliteHashFirst(&temp2); pElem; pElem=sqliteHashNext(pElem)){
+    sqlite3DeleteTrigger(&xdb, (Trigger*)sqliteHashData(pElem));
   }
+
   sqlite3HashClear(&temp2);
   sqlite3HashInit(&pSchema->tblHash);
   for(pElem=sqliteHashFirst(&temp1); pElem; pElem=sqliteHashNext(pElem)){
@@ -161008,9 +160978,12 @@ SQLITE_PRIVATE int sqlite3VtabEponymousTableInit(Parse *pParse, Module *pMod){
   addModuleArgument(pParse, pTab, sqlite3DbStrDup(db, pTab->zName));
   addModuleArgument(pParse, pTab, 0);
   addModuleArgument(pParse, pTab, sqlite3DbStrDup(db, pTab->zName));
+  db->nSchemaLock++;
   rc = vtabCallConstructor(db, pTab, pMod, pModule->xConnect, &zErr);
+  db->nSchemaLock--;
   if( rc ){
     sqlite3ErrorMsg(pParse, "%s", zErr);
+    pParse->rc = rc;
     sqlite3DbFree(db, zErr);
     sqlite3VtabEponymousTableClear(db, pMod);
   }
@@ -249267,6 +249240,7 @@ static void fts5SegIterReverseInitPage(Fts5Index *p, Fts5SegIter *pIter){
   while( 1 ){
     u64 iDelta = 0;
 
+    if( i>=n ) break;
     if( eDetail==FTS5_DETAIL_NONE ){
       /* todo */
       if( i<n && a[i]==0 ){
@@ -260330,7 +260304,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2025-11-04 19:38:17 fb2c931ae597f8d00a37574ff67aeed3eced4e5547f9120744ae4bfa8e74527b", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2025-11-28 17:28:25 281fc0e9afc38674b9b0991943b9e9d1e64c6cbdb133d35f6f5c87ff6af38a88", -1, SQLITE_TRANSIENT);
 }
 
 /*
@@ -265151,7 +265125,12 @@ static int fts5VocabOpenMethod(
   return rc;
 }
 
+/*
+** Restore cursor pCsr to the state it was in immediately after being
+** created by the xOpen() method.
+*/
 static void fts5VocabResetCursor(Fts5VocabCursor *pCsr){
+  int nCol = pCsr->pFts5->pConfig->nCol;
   pCsr->rowid = 0;
   sqlite3Fts5IterClose(pCsr->pIter);
   sqlite3Fts5StructureRelease(pCsr->pStruct);
@@ -265161,6 +265140,12 @@ static void fts5VocabResetCursor(Fts5VocabCursor *pCsr){
   pCsr->nLeTerm = -1;
   pCsr->zLeTerm = 0;
   pCsr->bEof = 0;
+  pCsr->iCol = 0;
+  pCsr->iInstPos = 0;
+  pCsr->iInstOff = 0;
+  pCsr->colUsed = 0;
+  memset(pCsr->aCnt, 0, sizeof(i64)*nCol);
+  memset(pCsr->aDoc, 0, sizeof(i64)*nCol);
 }
 
 /*
