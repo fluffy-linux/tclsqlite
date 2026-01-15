@@ -50,14 +50,6 @@ typedef unsigned short int u16;
 #endif
 
 /*
-** Determine if we are dealing with WinRT, which provides only a subset of
-** the full Win32 API.
-*/
-#if !defined(SQLITE_OS_WINRT)
-# define SQLITE_OS_WINRT 0
-#endif
-
-/*
 ** If SQLITE_SHELL_FIDDLE is defined then the shell is modified
 ** somewhat for use as a WASM module in a web browser. This flag
 ** should only be used when building the "fiddle" web application, as
@@ -195,9 +187,6 @@ typedef unsigned char u8;
 #endif
 
 #if defined(_WIN32) || defined(WIN32)
-# if SQLITE_OS_WINRT
-#  define SQLITE_OMIT_POPEN 1
-# else
 #  include <io.h>
 #  include <fcntl.h>
 #  define isatty(h) _isatty(h)
@@ -212,7 +201,6 @@ typedef unsigned char u8;
 #  endif
 #  undef pclose
 #  define pclose _pclose
-# endif
 #else
  /* Make sure isatty() has a prototype. */
  extern int isatty(int);
@@ -238,14 +226,12 @@ typedef unsigned char u8;
 /* ctype macros that work with signed characters */
 #define IsSpace(X)  isspace((unsigned char)X)
 #define IsDigit(X)  isdigit((unsigned char)X)
+#define IsAlnum(X)  isalnum((unsigned char)X)
 #define ToLower(X)  (char)tolower((unsigned char)X)
 #define IsAlnum(X)  isalnum((unsigned char)X)
 #define IsAlpha(X)  isalpha((unsigned char)X)
 
 #if defined(_WIN32) || defined(WIN32)
-#if SQLITE_OS_WINRT
-#include <intrin.h>
-#endif
 #undef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -1433,6 +1419,7 @@ static int hexDigitValue(char c){
 ** can be represented using a 64-bit twos-complement integer, then return
 ** the nearest representable value.
 */
+static sqlite3_int64 integerValue(const char *zArg){
   sqlite3_uint64 v = 0;
   static const struct { const char zSuffix[4]; unsigned int iMult; } aMult[] = {
     { "KiB", 1024 },
@@ -3517,19 +3504,19 @@ static int uintCollFunc(
   (void)notUsed;
   while( i<nKey1 && j<nKey2 ){
     x = zA[i] - zB[j];
-    if( IsDigit(zA[i]) ){
+    if( isdigit(zA[i]) ){
       int k;
-      if( !IsDigit(zB[j]) ) return x;
+      if( !isdigit(zB[j]) ) return x;
       while( i<nKey1 && zA[i]=='0' ){ i++; }
       while( j<nKey2 && zB[j]=='0' ){ j++; }
       k = 0;
-      while( i+k<nKey1 && IsDigit(zA[i+k])
-             && j+k<nKey2 && IsDigit(zB[j+k]) ){
+      while( i+k<nKey1 && isdigit(zA[i+k])
+             && j+k<nKey2 && isdigit(zB[j+k]) ){
         k++;
       }
-      if( i+k<nKey1 && IsDigit(zA[i+k]) ){
+      if( i+k<nKey1 && isdigit(zA[i+k]) ){
         return +1;
-      }else if( j+k<nKey2 && IsDigit(zB[j+k]) ){
+      }else if( j+k<nKey2 && isdigit(zB[j+k]) ){
         return -1;
       }else{
         x = memcmp(zA+i, zB+j, k);
@@ -5028,7 +5015,7 @@ static u8* fromBase85( char *pIn, int ncIn, u8 *pOut ){
 static int allBase85( char *p, int len ){
   char c;
   while( len-- > 0 && (c = *p++) != 0 ){
-    if( !IS_B85(c) && !IsSpace(c) ) return 0;
+    if( !IS_B85(c) && !isspace(c) ) return 0;
   }
   return 1;
 }
@@ -7748,6 +7735,7 @@ static int fileStat(
   b1[sz] = 0;
   rc = _wstat(b1, pStatBuf);
   if( rc==0 ) statTimesToUtc(zPath, pStatBuf);
+  sqlite3_free(b1);
   return rc;
 #else
   return stat(zPath, pStatBuf);
@@ -7878,7 +7866,6 @@ static int writeFile(
 
   if( mtime>=0 ){
 #if defined(_WIN32)
-#if !SQLITE_OS_WINRT
     /* Windows */
     FILETIME lastAccess;
     FILETIME lastWrite;
@@ -7909,7 +7896,6 @@ static int writeFile(
     }else{
       return 1;
     }
-#endif
 #elif defined(AT_FDCWD) && 0 /* utimensat() is not universally available */
     /* Recent unix */
     struct timespec times[2];
@@ -10148,7 +10134,7 @@ static int zipfileConnect(
 
   rc = sqlite3_declare_vtab(db, ZIPFILE_SCHEMA);
   if( rc==SQLITE_OK ){
-    pNew = (ZipfileTab*)sqlite3_malloc(nByte+nFile);
+    pNew = (ZipfileTab*)sqlite3_malloc64((i64)nByte+nFile);
     if( pNew==0 ) return SQLITE_NOMEM;
     memset(pNew, 0, nByte+nFile);
     pNew->db = db;
@@ -10294,14 +10280,15 @@ static void zipfileCursorErr(ZipfileCsr *pCsr, const char *zFmt, ...){
 static int zipfileReadData(
   FILE *pFile,                    /* Read from this file */
   u8 *aRead,                      /* Read into this buffer */
-  int nRead,                      /* Number of bytes to read */
+  i64 nRead,                      /* Number of bytes to read */
   i64 iOff,                       /* Offset to read from */
   char **pzErrmsg                 /* OUT: Error message (from sqlite3_malloc) */
 ){
   size_t n;
   fseek(pFile, (long)iOff, SEEK_SET);
-  n = fread(aRead, 1, nRead, pFile);
-  if( (int)n!=nRead ){
+  n = fread(aRead, 1, (long)nRead, pFile);
+  if( n!=(size_t)nRead ){
+    sqlite3_free(*pzErrmsg);
     *pzErrmsg = sqlite3_mprintf("error in fread()");
     return SQLITE_ERROR;
   }
@@ -10318,7 +10305,7 @@ static int zipfileAppendData(
     fseek(pTab->pWriteFd, (long)pTab->szCurrent, SEEK_SET);
     n = fwrite(aWrite, 1, nWrite, pTab->pWriteFd);
     if( (int)n!=nWrite ){
-      pTab->base.zErrMsg = sqlite3_mprintf("error in fwrite()");
+      zipfileTableErr(pTab,"error in fwrite()");
       return SQLITE_ERROR;
     }
     pTab->szCurrent += nWrite;
@@ -10565,6 +10552,7 @@ static void zipfileMtimeToDos(ZipfileCDS *pCds, u32 mUnixTime){
 ** generic corruption message and return SQLITE_CORRUPT;
 */
 static int zipfileCorrupt(char **pzErr){
+  sqlite3_free(*pzErr);
   *pzErr = sqlite3_mprintf("zip archive is corrupt");
   return SQLITE_CORRUPT;
 }
@@ -10583,7 +10571,7 @@ static int zipfileCorrupt(char **pzErr){
 static int zipfileGetEntry(
   ZipfileTab *pTab,               /* Store any error message here */
   const u8 *aBlob,                /* Pointer to in-memory file image */
-  int nBlob,                      /* Size of aBlob[] in bytes */
+  i64 nBlob,                      /* Size of aBlob[] in bytes */
   FILE *pFile,                    /* If aBlob==0, read from this file */
   i64 iOff,                       /* Offset of CDS record */
   ZipfileEntry **ppEntry          /* OUT: Pointer to new object */
@@ -10623,14 +10611,14 @@ static int zipfileGetEntry(
       memset(pNew, 0, sizeof(ZipfileEntry));
       rc = zipfileReadCDS(aRead, &pNew->cds);
       if( rc!=SQLITE_OK ){
-        *pzErr = sqlite3_mprintf("failed to read CDS at offset %lld", iOff);
+        zipfileTableErr(pTab, "failed to read CDS at offset %lld", iOff);
       }else if( aBlob==0 ){
         rc = zipfileReadData(
             pFile, aRead, nExtra+nFile, iOff+ZIPFILE_CDS_FIXED_SZ, pzErr
         );
       }else{
         aRead = (u8*)&aBlob[iOff + ZIPFILE_CDS_FIXED_SZ];
-        if( (iOff + ZIPFILE_LFH_FIXED_SZ + nFile + nExtra)>nBlob ){
+        if( (iOff + ZIPFILE_CDS_FIXED_SZ + nFile + nExtra)>nBlob ){
           rc = zipfileCorrupt(pzErr);
         }
       }
@@ -10655,14 +10643,15 @@ static int zipfileGetEntry(
         rc = zipfileReadData(pFile, aRead, szFix, pNew->cds.iOffset, pzErr);
       }else{
         aRead = (u8*)&aBlob[pNew->cds.iOffset];
-        if( (pNew->cds.iOffset + ZIPFILE_LFH_FIXED_SZ)>nBlob ){
+        if( ((i64)pNew->cds.iOffset + ZIPFILE_LFH_FIXED_SZ)>nBlob ){
           rc = zipfileCorrupt(pzErr);
         }
       }
 
+      memset(&lfh, 0, sizeof(lfh));
       if( rc==SQLITE_OK ) rc = zipfileReadLFH(aRead, &lfh);
       if( rc==SQLITE_OK ){
-        pNew->iDataOff =  pNew->cds.iOffset + ZIPFILE_LFH_FIXED_SZ;
+        pNew->iDataOff =  (i64)pNew->cds.iOffset + ZIPFILE_LFH_FIXED_SZ;
         pNew->iDataOff += lfh.nFile + lfh.nExtra;
         if( aBlob && pNew->cds.szCompressed ){
           if( pNew->iDataOff + pNew->cds.szCompressed > nBlob ){
@@ -10673,7 +10662,7 @@ static int zipfileGetEntry(
           }
         }
       }else{
-        *pzErr = sqlite3_mprintf("failed to read LFH at offset %d", 
+        zipfileTableErr(pTab, "failed to read LFH at offset %d", 
             (int)pNew->cds.iOffset
         );
       }
@@ -10697,7 +10686,7 @@ static int zipfileNext(sqlite3_vtab_cursor *cur){
   int rc = SQLITE_OK;
 
   if( pCsr->pFile ){
-    i64 iEof = pCsr->eocd.iOffset + pCsr->eocd.nSize;
+    i64 iEof = (i64)pCsr->eocd.iOffset + (i64)pCsr->eocd.nSize;
     zipfileEntryFree(pCsr->pCurrent);
     pCsr->pCurrent = 0;
     if( pCsr->iNextOff>=iEof ){
@@ -10763,7 +10752,7 @@ static void zipfileInflate(
       if( err!=Z_STREAM_END ){
         zipfileCtxErrorMsg(pCtx, "inflate() failed (%d)", err);
       }else{
-        sqlite3_result_blob(pCtx, aRes, nOut, zipfileFree);
+        sqlite3_result_blob(pCtx, aRes, (int)str.total_out, zipfileFree);
         aRes = 0;
       }
     }
@@ -10935,12 +10924,12 @@ static int zipfileEof(sqlite3_vtab_cursor *cur){
 static int zipfileReadEOCD(
   ZipfileTab *pTab,               /* Return errors here */
   const u8 *aBlob,                /* Pointer to in-memory file image */
-  int nBlob,                      /* Size of aBlob[] in bytes */
+  i64 nBlob,                      /* Size of aBlob[] in bytes */
   FILE *pFile,                    /* Read from this file if aBlob==0 */
   ZipfileEOCD *pEOCD              /* Object to populate */
 ){
   u8 *aRead = pTab->aBuffer;      /* Temporary buffer */
-  int nRead;                      /* Bytes to read from file */
+  i64 nRead;                      /* Bytes to read from file */
   int rc = SQLITE_OK;
 
   memset(pEOCD, 0, sizeof(ZipfileEOCD));
@@ -10961,7 +10950,7 @@ static int zipfileReadEOCD(
   }
 
   if( rc==SQLITE_OK ){
-    int i;
+    i64 i;
 
     /* Scan backwards looking for the signature bytes */
     for(i=nRead-20; i>=0; i--){
@@ -10972,9 +10961,7 @@ static int zipfileReadEOCD(
       }
     }
     if( i<0 ){
-      pTab->base.zErrMsg = sqlite3_mprintf(
-          "cannot find end of central directory record"
-      );
+      zipfileTableErr(pTab, "cannot find end of central directory record");
       return SQLITE_ERROR;
     }
 
@@ -11019,7 +11006,7 @@ static void zipfileAddEntry(
   }
 }
 
-static int zipfileLoadDirectory(ZipfileTab *pTab, const u8 *aBlob, int nBlob){
+static int zipfileLoadDirectory(ZipfileTab *pTab, const u8 *aBlob, i64 nBlob){
   ZipfileEOCD eocd;
   int rc;
   int i;
@@ -11067,7 +11054,7 @@ static int zipfileFilter(
   }else if( sqlite3_value_type(argv[0])==SQLITE_BLOB ){
     static const u8 aEmptyBlob = 0;
     const u8 *aBlob = (const u8*)sqlite3_value_blob(argv[0]);
-    int nBlob = sqlite3_value_bytes(argv[0]);
+    i64 nBlob = sqlite3_value_bytes(argv[0]);
     assert( pTab->pFirstEntry==0 );
     if( aBlob==0 ){
       aBlob = &aEmptyBlob;
@@ -11265,7 +11252,7 @@ static int zipfileBegin(sqlite3_vtab *pVtab){
 
   assert( pTab->pWriteFd==0 );
   if( pTab->zFile==0 || pTab->zFile[0]==0 ){
-    pTab->base.zErrMsg = sqlite3_mprintf("zipfile: missing filename");
+    zipfileTableErr(pTab, "zipfile: missing filename");
     return SQLITE_ERROR;
   }
 
@@ -11275,7 +11262,7 @@ static int zipfileBegin(sqlite3_vtab *pVtab){
   ** in main-memory until the transaction is committed.  */
   pTab->pWriteFd = sqlite3_fopen(pTab->zFile, "ab+");
   if( pTab->pWriteFd==0 ){
-    pTab->base.zErrMsg = sqlite3_mprintf(
+    zipfileTableErr(pTab,
         "zipfile: failed to open file %s for writing", pTab->zFile
         );
     rc = SQLITE_ERROR;
@@ -17353,6 +17340,7 @@ int sqlite3_recover_finish(sqlite3_recover*);
 
 #if !defined(SQLITEINT_H) 
 /* #include "sqlite3.h" */
+/* #include "sqlite3ext.h" */
 
 /* typedef unsigned char u8; */
 /* typedef unsigned int u32; */
@@ -22651,7 +22639,7 @@ static int shell_callback(
     case MODE_List: {
       if( p->cnt++==0 && p->showHeader ){
         for(i=0; i<nArg; i++){
-          char *z = azCol[i];
+          const char *z = azCol[i];
           char *pFree;
           const char *zOut = escapeOutput(p, z, &pFree);
           sqlite3_fprintf(p->out, "%s%s", zOut,
@@ -32975,18 +32963,14 @@ static void main_init(ShellState *data) {
 */
 #if defined(_WIN32) || defined(WIN32)
 static void printBold(const char *zText){
-#if !SQLITE_OS_WINRT
   HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
   CONSOLE_SCREEN_BUFFER_INFO defaultScreenInfo;
   GetConsoleScreenBufferInfo(out, &defaultScreenInfo);
   SetConsoleTextAttribute(out,
          FOREGROUND_RED|FOREGROUND_INTENSITY
   );
-#endif
   sputz(stdout, zText);
-#if !SQLITE_OS_WINRT
   SetConsoleTextAttribute(out, defaultScreenInfo.wAttributes);
-#endif
 }
 #else
 static void printBold(const char *zText){
@@ -33094,11 +33078,7 @@ int SQLITE_CDECL wmain(int argc, wchar_t **wargv){
       }
     }else{
 #if defined(_WIN32) || defined(WIN32)
-#if SQLITE_OS_WINRT
-      __debugbreak();
-#else
       DebugBreak();
-#endif
 #elif defined(SIGTRAP)
       raise(SIGTRAP);
 #endif
@@ -33586,7 +33566,8 @@ int SQLITE_CDECL wmain(int argc, wchar_t **wargv){
       if( nCmd>0 ){
         sqlite3_fprintf(stderr,"Error: cannot mix regular SQL or dot-commands"
               " with \"%s\"\n", z);
-        return 1;
+        rc = 1;
+        goto shell_main_exit;
       }
       open_db(&data, OPEN_DB_ZIPFILE);
       if( z[2] ){
