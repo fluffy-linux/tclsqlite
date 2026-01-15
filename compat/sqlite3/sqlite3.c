@@ -1,6 +1,6 @@
 /******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
-** version 3.51.1.  By combining all the individual C code files into this
+** version 3.51.2.  By combining all the individual C code files into this
 ** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
@@ -18,7 +18,7 @@
 ** separate file. This file contains only code for the core SQLite library.
 **
 ** The content in this amalgamation comes from Fossil check-in
-** 281fc0e9afc38674b9b0991943b9e9d1e64c with changes in files:
+** b270f8339eb13b504d0b2ba154ebca966b7d with changes in files:
 **
 **    
 */
@@ -467,12 +467,12 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.51.1"
-#define SQLITE_VERSION_NUMBER 3051001
-#define SQLITE_SOURCE_ID      "2025-11-28 17:28:25 281fc0e9afc38674b9b0991943b9e9d1e64c6cbdb133d35f6f5c87ff6af38a88"
+#define SQLITE_VERSION        "3.51.2"
+#define SQLITE_VERSION_NUMBER 3051002
+#define SQLITE_SOURCE_ID      "2026-01-09 17:27:48 b270f8339eb13b504d0b2ba154ebca966b7dde08e40c3ed7d559749818cb2075"
 #define SQLITE_SCM_BRANCH     "branch-3.51"
-#define SQLITE_SCM_TAGS       "release version-3.51.1"
-#define SQLITE_SCM_DATETIME   "2025-11-28T17:28:25.933Z"
+#define SQLITE_SCM_TAGS       "release version-3.51.2"
+#define SQLITE_SCM_DATETIME   "2026-01-09T17:27:48.405Z"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -14333,6 +14333,27 @@ struct fts5_api {
 # define SQLITE_MAX_LENGTH 1000000000
 #endif
 #define SQLITE_MIN_LENGTH 30   /* Minimum value for the length limit */
+
+/*
+** Maximum size of any single memory allocation.
+**
+** This is not a limit on the total amount of memory used.  This is
+** a limit on the size parameter to sqlite3_malloc() and sqlite3_realloc().
+**
+** The upper bound is slightly less than 2GiB:  0x7ffffeff == 2,147,483,391
+** This provides a 256-byte safety margin for defense against 32-bit
+** signed integer overflow bugs when computing memory allocation sizes.
+** Paranoid applications might want to reduce the maximum allocation size
+** further for an even larger safety margin.  0x3fffffff or 0x0fffffff
+** or even smaller would be reasonable upper bounds on the size of a memory
+** allocations for most applications.
+*/
+#ifndef SQLITE_MAX_ALLOCATION_SIZE
+# define SQLITE_MAX_ALLOCATION_SIZE  2147483391
+#endif
+#if SQLITE_MAX_ALLOCATION_SIZE>2147483391
+# error Maximum size for SQLITE_MAX_ALLOCATION_SIZE is 2147483391
+#endif
 
 /*
 ** This is the maximum number of
@@ -31295,27 +31316,6 @@ static void mallocWithAlarm(int n, void **pp){
 }
 
 /*
-** Maximum size of any single memory allocation.
-**
-** This is not a limit on the total amount of memory used.  This is
-** a limit on the size parameter to sqlite3_malloc() and sqlite3_realloc().
-**
-** The upper bound is slightly less than 2GiB:  0x7ffffeff == 2,147,483,391
-** This provides a 256-byte safety margin for defense against 32-bit
-** signed integer overflow bugs when computing memory allocation sizes.
-** Paranoid applications might want to reduce the maximum allocation size
-** further for an even larger safety margin.  0x3fffffff or 0x0fffffff
-** or even smaller would be reasonable upper bounds on the size of a memory
-** allocations for most applications.
-*/
-#ifndef SQLITE_MAX_ALLOCATION_SIZE
-# define SQLITE_MAX_ALLOCATION_SIZE  2147483391
-#endif
-#if SQLITE_MAX_ALLOCATION_SIZE>2147483391
-# error Maximum size for SQLITE_MAX_ALLOCATION_SIZE is 2147483391
-#endif
-
-/*
 ** Allocate memory.  This routine is like sqlite3_malloc() except that it
 ** assumes the memory subsystem has already been initialized.
 */
@@ -31538,8 +31538,7 @@ SQLITE_PRIVATE void *sqlite3Realloc(void *pOld, u64 nBytes){
     sqlite3_free(pOld); /* IMP: R-26507-47431 */
     return 0;
   }
-  if( nBytes>=0x7fffff00 ){
-    /* The 0x7ffff00 limit term is explained in comments on sqlite3Malloc() */
+  if( nBytes>SQLITE_MAX_ALLOCATION_SIZE ){
     return 0;
   }
   nOld = sqlite3MallocSize(pOld);
@@ -43871,11 +43870,11 @@ static int unixIsSharingShmNode(unixFile *pFile){
   assert( AtomicLoad(&pShmNode->nRef)==1 );
 #endif
   memset(&lock, 0, sizeof(lock));
-    lock.l_whence = SEEK_SET;
-    lock.l_start = UNIX_SHM_DMS;
-    lock.l_len = 1;
-    lock.l_type = F_WRLCK;
-    osFcntl(pShmNode->hShm, F_GETLK, &lock);
+  lock.l_whence = SEEK_SET;
+  lock.l_start = UNIX_SHM_DMS;
+  lock.l_len = 1;
+  lock.l_type = F_WRLCK;
+  osFcntl(pShmNode->hShm, F_GETLK, &lock);
   return (lock.l_type!=F_UNLCK);
 }
 
@@ -77256,7 +77255,7 @@ static int accessPayload(
 
   getCellInfo(pCur);
   aPayload = pCur->info.pPayload;
-  assert( offset+amt <= pCur->info.nPayload );
+  assert( (u64)offset+(u64)amt <= (u64)pCur->info.nPayload );
 
   assert( aPayload > pPage->aData );
   if( (uptr)(aPayload - pPage->aData) > (pBt->usableSize - pCur->info.nLocal) ){
@@ -85730,7 +85729,12 @@ SQLITE_PRIVATE int sqlite3VdbeMemFromBtree(
 ){
   int rc;
   pMem->flags = MEM_Null;
-  if( sqlite3BtreeMaxRecordSize(pCur)<offset+amt ){
+  testcase( amt==SQLITE_MAX_ALLOCATION_SIZE-1 );
+  testcase( amt==SQLITE_MAX_ALLOCATION_SIZE );
+  if( amt>=SQLITE_MAX_ALLOCATION_SIZE ){
+    return SQLITE_NOMEM_BKPT;
+  }
+  if( (u64)amt + (u64)offset > (u64)sqlite3BtreeMaxRecordSize(pCur) ){
     return SQLITE_CORRUPT_BKPT;
   }
   if( SQLITE_OK==(rc = sqlite3VdbeMemClearAndResize(pMem, amt+1)) ){
@@ -93143,7 +93147,7 @@ static int valueFromValueList(
     Mem sMem;     /* Raw content of current row */
     memset(&sMem, 0, sizeof(sMem));
     sz = sqlite3BtreePayloadSize(pRhs->pCsr);
-    rc = sqlite3VdbeMemFromBtreeZeroOffset(pRhs->pCsr,(int)sz,&sMem);
+    rc = sqlite3VdbeMemFromBtreeZeroOffset(pRhs->pCsr,sz,&sMem);
     if( rc==SQLITE_OK ){
       u8 *zBuf = (u8*)sMem.z;
       u32 iSerial;
@@ -115029,7 +115033,7 @@ SQLITE_PRIVATE int sqlite3CodeSubselect(Parse *pParse, Expr *pExpr){
       dest.iSdst = pParse->nMem+1;
       pParse->nMem += nReg;
     }else{
-    dest.iSdst = dest.iSDParm;
+      dest.iSdst = dest.iSDParm;
     }
     dest.nSdst = nReg;
     sqlite3VdbeAddOp3(v, OP_Null, 0, dest.iSDParm, pParse->nMem);
@@ -153922,12 +153926,24 @@ static SQLITE_NOINLINE void existsToJoin(
        && (pSub->selFlags & SF_Aggregate)==0
        && !pSub->pSrc->a[0].fg.isSubquery
        && pSub->pLimit==0
+       && pSub->pPrior==0
       ){
+        /* Before combining the sub-select with the parent, renumber the
+        ** cursor used by the subselect. This is because the EXISTS expression
+        ** might be a copy of another EXISTS expression from somewhere
+        ** else in the tree, and in this case it is important that it use
+        ** a unique cursor number.  */
+        sqlite3 *db = pParse->db;
+        int *aCsrMap = sqlite3DbMallocZero(db, (pParse->nTab+2)*sizeof(int));
+        if( aCsrMap==0 ) return;
+        aCsrMap[0] = (pParse->nTab+1);
+        renumberCursors(pParse, pSub, -1, aCsrMap);
+        sqlite3DbFree(db, aCsrMap);
+
         memset(pWhere, 0, sizeof(*pWhere));
         pWhere->op = TK_INTEGER;
         pWhere->u.iValue = 1;
         ExprSetProperty(pWhere, EP_IntValue);
-
         assert( p->pWhere!=0 );
         pSub->pSrc->a[0].fg.fromExists = 1;
         pSub->pSrc->a[0].fg.jointype |= JT_CROSS;
@@ -173770,23 +173786,23 @@ SQLITE_PRIVATE void sqlite3WhereEnd(WhereInfo *pWInfo){
       }
 #endif /* SQLITE_DISABLE_SKIPAHEAD_DISTINCT */
     }
-      if( pTabList->a[pLevel->iFrom].fg.fromExists && i==pWInfo->nLevel-1 ){
-        /* If the EXISTS-to-JOIN optimization was applied, then the EXISTS
-        ** loop(s) will be the inner-most loops of the join. There might be
-        ** multiple EXISTS loops, but they will all be nested, and the join
-        ** order will not have been changed by the query planner.  If the
-        ** inner-most EXISTS loop sees a single successful row, it should
-        ** break out of *all* EXISTS loops.  But only the inner-most of the
-        ** nested EXISTS loops should do this breakout. */
-        int nOuter = 0; /* Nr of outer EXISTS that this one is nested within */
-        while( nOuter<i ){
-          if( !pTabList->a[pLevel[-nOuter-1].iFrom].fg.fromExists ) break;
-          nOuter++;
-        }
-        testcase( nOuter>0 );
-        sqlite3VdbeAddOp2(v, OP_Goto, 0, pLevel[-nOuter].addrBrk);
-        VdbeComment((v, "EXISTS break"));
+    if( pTabList->a[pLevel->iFrom].fg.fromExists && i==pWInfo->nLevel-1 ){
+      /* If the EXISTS-to-JOIN optimization was applied, then the EXISTS
+      ** loop(s) will be the inner-most loops of the join. There might be
+      ** multiple EXISTS loops, but they will all be nested, and the join
+      ** order will not have been changed by the query planner.  If the
+      ** inner-most EXISTS loop sees a single successful row, it should
+      ** break out of *all* EXISTS loops.  But only the inner-most of the
+      ** nested EXISTS loops should do this breakout. */
+      int nOuter = 0; /* Nr of outer EXISTS that this one is nested within */
+      while( nOuter<i ){
+        if( !pTabList->a[pLevel[-nOuter-1].iFrom].fg.fromExists ) break;
+        nOuter++;
       }
+      testcase( nOuter>0 );
+      sqlite3VdbeAddOp2(v, OP_Goto, 0, pLevel[-nOuter].addrBrk);
+      VdbeComment((v, "EXISTS break"));
+    }
     sqlite3VdbeResolveLabel(v, pLevel->addrCont);
     if( pLevel->op!=OP_Noop ){
       sqlite3VdbeAddOp3(v, pLevel->op, pLevel->p1, pLevel->p2, pLevel->p3);
@@ -219179,7 +219195,7 @@ static void rtreenode(sqlite3_context *ctx, int nArg, sqlite3_value **apArg){
   if( node.zData==0 ) return;
   nData = sqlite3_value_bytes(apArg[1]);
   if( nData<4 ) return;
-  if( nData<NCELL(&node)*tree.nBytesPerCell ) return;
+  if( nData<4+NCELL(&node)*tree.nBytesPerCell ) return;
 
   pOut = sqlite3_str_new(0);
   for(ii=0; ii<NCELL(&node); ii++){
@@ -238260,7 +238276,13 @@ typedef sqlite3_uint64 u64;
 # define FLEXARRAY 1
 #endif
 
-#endif
+#endif /* SQLITE_AMALGAMATION */
+
+/*
+** Constants for the largest and smallest possible 32-bit signed integers.
+*/
+# define LARGEST_INT32  ((int)(0x7fffffff))
+# define SMALLEST_INT32 ((int)((-1) - LARGEST_INT32))
 
 /* Truncate very long tokens to this many bytes. Hard limit is
 ** (65536-1-1-4-9)==65521 bytes. The limiting factor is the 16-bit offset
@@ -252823,7 +252845,7 @@ static int sqlite3Fts5IndexMerge(Fts5Index *p, int nMerge){
       fts5StructureRelease(pStruct);
       pStruct = pNew;
       nMin = 1;
-      nMerge = nMerge*-1;
+      nMerge = (nMerge==SMALLEST_INT32 ? LARGEST_INT32 : (nMerge*-1));
     }
     if( pStruct && pStruct->nLevel ){
       if( fts5IndexMerge(p, &pStruct, nMerge, nMin) ){
@@ -260030,7 +260052,7 @@ static void fts5SourceIdFunc(
 ){
   assert( nArg==0 );
   UNUSED_PARAM2(nArg, apUnused);
-  sqlite3_result_text(pCtx, "fts5: 2025-11-28 17:28:25 281fc0e9afc38674b9b0991943b9e9d1e64c6cbdb133d35f6f5c87ff6af38a88", -1, SQLITE_TRANSIENT);
+  sqlite3_result_text(pCtx, "fts5: 2026-01-09 17:27:48 b270f8339eb13b504d0b2ba154ebca966b7dde08e40c3ed7d559749818cb2075", -1, SQLITE_TRANSIENT);
 }
 
 /*
