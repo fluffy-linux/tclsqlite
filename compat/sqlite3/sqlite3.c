@@ -48913,7 +48913,7 @@ static struct win_syscall {
 #define osGetFileInformationByHandleEx ((BOOL(WINAPI*)(HANDLE, \
         FILE_INFO_BY_HANDLE_CLASS,LPVOID,DWORD))aSyscall[65].pCurrent)
 
-  { "CreateFile2",             (SYSCALL)CreateFile2,             0 },
+  { "CreateFile2",             (SYSCALL)0,             0 },
 
 #define osCreateFile2 ((HANDLE(WINAPI*)(LPCWSTR,DWORD,DWORD,DWORD, \
         LPCREATEFILE2_EXTENDED_PARAMETERS))aSyscall[66].pCurrent)
