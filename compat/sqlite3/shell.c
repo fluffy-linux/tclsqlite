@@ -11263,8 +11263,8 @@ static int zipfileBegin(sqlite3_vtab *pVtab){
   pTab->pWriteFd = sqlite3_fopen(pTab->zFile, "ab+");
   if( pTab->pWriteFd==0 ){
     zipfileTableErr(pTab,
-        "zipfile: failed to open file %s for writing", pTab->zFile
-        );
+      "zipfile: failed to open file %s for writing", pTab->zFile
+    );
     rc = SQLITE_ERROR;
   }else{
     fseek(pTab->pWriteFd, 0, SEEK_END);
