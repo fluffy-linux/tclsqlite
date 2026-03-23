@@ -25194,7 +25194,7 @@ static int getDigits(const char *zDate, const char *zFormat, ...){
     int val = 0;
     u16 max;
 
-    assert( zFormat[2]>='a' && zFormat[2]<='f' );
+    assert( zFormat[2]>='a' && zFormat[2]<='g' );
     max = aMx[zFormat[2] - 'a'];
     nextC = zFormat[3];
     val = 0;
