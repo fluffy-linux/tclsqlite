@@ -371,7 +371,11 @@ struct sqlite3_api_routines {
   /* Version 3.51.0 and later */
   int (*set_errmsg)(sqlite3*,int,const char*);
   int (*db_status64)(sqlite3*,int,sqlite3_int64*,sqlite3_int64*,int);
-  
+  /* Version 3.52.0 and later */
+  void (*str_truncate)(sqlite3_str*,int);
+  void (*str_free)(sqlite3_str*);
+  int (*carray_bind)(sqlite3_stmt*,int,void*,int,int,void(*)(void*));
+  int (*carray_bind_v2)(sqlite3_stmt*,int,void*,int,int,void(*)(void*),void*);
 };
 
 /*
@@ -397,9 +401,10 @@ typedef int (*sqlite3_loadext_entry)(
 */
 #if !defined(SQLITE_CORE) && !defined(SQLITE_OMIT_LOAD_EXTENSION)
 #define sqlite3_aggregate_context      sqlite3_api->aggregate_context
-#ifndef sqlite3_bind_blob
-#define sqlite3_bind_blob              sqlite3_api->bind_blob
+#ifndef SQLITE_OMIT_DEPRECATED
+#define sqlite3_aggregate_count        sqlite3_api->aggregate_count
 #endif
+#define sqlite3_bind_blob              sqlite3_api->bind_blob
 #define sqlite3_bind_double            sqlite3_api->bind_double
 #define sqlite3_bind_int               sqlite3_api->bind_int
 #define sqlite3_bind_int64             sqlite3_api->bind_int64
@@ -407,12 +412,8 @@ typedef int (*sqlite3_loadext_entry)(
 #define sqlite3_bind_parameter_count   sqlite3_api->bind_parameter_count
 #define sqlite3_bind_parameter_index   sqlite3_api->bind_parameter_index
 #define sqlite3_bind_parameter_name    sqlite3_api->bind_parameter_name
-#ifndef sqlite3_bind_text
 #define sqlite3_bind_text              sqlite3_api->bind_text
-#endif
-#ifndef sqlite3_bind_text16
 #define sqlite3_bind_text16            sqlite3_api->bind_text16
-#endif
 #define sqlite3_bind_value             sqlite3_api->bind_value
 #define sqlite3_busy_handler           sqlite3_api->busy_handler
 #define sqlite3_busy_timeout           sqlite3_api->busy_timeout
@@ -444,14 +445,11 @@ typedef int (*sqlite3_loadext_entry)(
 #define sqlite3_commit_hook            sqlite3_api->commit_hook
 #define sqlite3_complete               sqlite3_api->complete
 #define sqlite3_complete16             sqlite3_api->complete16
-#undef sqlite3_create_collation
-#define sqlite3_create_collation(a,b,c,d,e) sqlite3_create_collation_v2(a,b,c,d,e,0)
+#define sqlite3_create_collation       sqlite3_api->create_collation
 #define sqlite3_create_collation16     sqlite3_api->create_collation16
-#undef sqlite3_create_function
-#define sqlite3_create_function(a,b,c,d,e,f,g,h) sqlite3_create_function_v2(a,b,c,d,e,f,g,h,0)
+#define sqlite3_create_function        sqlite3_api->create_function
 #define sqlite3_create_function16      sqlite3_api->create_function16
-#undef sqlite3_create_module
-#define sqlite3_create_module(a,b,c,d) sqlite3_create_module_v2(a,b,c,d,0)
+#define sqlite3_create_module          sqlite3_api->create_module
 #define sqlite3_create_module_v2       sqlite3_api->create_module_v2
 #define sqlite3_data_count             sqlite3_api->data_count
 #define sqlite3_db_handle              sqlite3_api->db_handle
@@ -461,19 +459,23 @@ typedef int (*sqlite3_loadext_entry)(
 #define sqlite3_errmsg                 sqlite3_api->errmsg
 #define sqlite3_errmsg16               sqlite3_api->errmsg16
 #define sqlite3_exec                   sqlite3_api->exec
+#ifndef SQLITE_OMIT_DEPRECATED
+#define sqlite3_expired                sqlite3_api->expired
+#endif
 #define sqlite3_finalize               sqlite3_api->finalize
 #define sqlite3_free                   sqlite3_api->free
 #define sqlite3_free_table             sqlite3_api->free_table
 #define sqlite3_get_autocommit         sqlite3_api->get_autocommit
 #define sqlite3_get_auxdata            sqlite3_api->get_auxdata
 #define sqlite3_get_table              sqlite3_api->get_table
+#ifndef SQLITE_OMIT_DEPRECATED
+#define sqlite3_global_recover         sqlite3_api->global_recover
+#endif
 #define sqlite3_interrupt              sqlite3_api->interruptx
 #define sqlite3_last_insert_rowid      sqlite3_api->last_insert_rowid
 #define sqlite3_libversion             sqlite3_api->libversion
 #define sqlite3_libversion_number      sqlite3_api->libversion_number
-#ifndef sqlite3_malloc
 #define sqlite3_malloc                 sqlite3_api->malloc
-#endif
 #define sqlite3_mprintf                sqlite3_api->mprintf
 #define sqlite3_open                   sqlite3_api->open
 #define sqlite3_open16                 sqlite3_api->open16
@@ -483,9 +485,7 @@ typedef int (*sqlite3_loadext_entry)(
 #define sqlite3_prepare16_v2           sqlite3_api->prepare16_v2
 #define sqlite3_profile                sqlite3_api->profile
 #define sqlite3_progress_handler       sqlite3_api->progress_handler
-#ifndef sqlite3_realloc
 #define sqlite3_realloc                sqlite3_api->realloc
-#endif
 #define sqlite3_reset                  sqlite3_api->reset
 #define sqlite3_result_blob            sqlite3_api->result_blob
 #define sqlite3_result_double          sqlite3_api->result_double
@@ -494,18 +494,10 @@ typedef int (*sqlite3_loadext_entry)(
 #define sqlite3_result_int             sqlite3_api->result_int
 #define sqlite3_result_int64           sqlite3_api->result_int64
 #define sqlite3_result_null            sqlite3_api->result_null
-#ifndef sqlite3_result_text
 #define sqlite3_result_text            sqlite3_api->result_text
-#endif
-#ifndef sqlite3_result_text16
 #define sqlite3_result_text16          sqlite3_api->result_text16
-#endif
-#ifndef sqlite3_result_text16be
 #define sqlite3_result_text16be        sqlite3_api->result_text16be
-#endif
-#ifndef sqlite3_result_text16le
 #define sqlite3_result_text16le        sqlite3_api->result_text16le
-#endif
 #define sqlite3_result_value           sqlite3_api->result_value
 #define sqlite3_rollback_hook          sqlite3_api->rollback_hook
 #define sqlite3_set_authorizer         sqlite3_api->set_authorizer
@@ -528,18 +520,10 @@ typedef int (*sqlite3_loadext_entry)(
 #define sqlite3_value_int              sqlite3_api->value_int
 #define sqlite3_value_int64            sqlite3_api->value_int64
 #define sqlite3_value_numeric_type     sqlite3_api->value_numeric_type
-#ifndef sqlite3_value_text
 #define sqlite3_value_text             sqlite3_api->value_text
-#endif
-#ifndef sqlite3_value_text16
 #define sqlite3_value_text16           sqlite3_api->value_text16
-#endif
-#ifndef sqlite3_value_text16be
 #define sqlite3_value_text16be         sqlite3_api->value_text16be
-#endif
-#ifndef sqlite3_value_text16le
 #define sqlite3_value_text16le         sqlite3_api->value_text16le
-#endif
 #define sqlite3_value_type             sqlite3_api->value_type
 #define sqlite3_vmprintf               sqlite3_api->vmprintf
 #define sqlite3_vsnprintf              sqlite3_api->xvsnprintf
@@ -567,13 +551,12 @@ typedef int (*sqlite3_loadext_entry)(
 #define sqlite3_result_error_nomem     sqlite3_api->result_error_nomem
 #define sqlite3_result_error_toobig    sqlite3_api->result_error_toobig
 #define sqlite3_sleep                  sqlite3_api->sleep
+#define sqlite3_soft_heap_limit        sqlite3_api->soft_heap_limit
 #define sqlite3_vfs_find               sqlite3_api->vfs_find
 #define sqlite3_vfs_register           sqlite3_api->vfs_register
 #define sqlite3_vfs_unregister         sqlite3_api->vfs_unregister
 #define sqlite3_threadsafe             sqlite3_api->xthreadsafe
-#ifndef sqlite3_result_zeroblob
 #define sqlite3_result_zeroblob        sqlite3_api->result_zeroblob
-#endif
 #define sqlite3_result_error_code      sqlite3_api->result_error_code
 #define sqlite3_test_control           sqlite3_api->test_control
 #define sqlite3_randomness             sqlite3_api->randomness
@@ -602,8 +585,7 @@ typedef int (*sqlite3_loadext_entry)(
 #define sqlite3_strnicmp               sqlite3_api->strnicmp
 #define sqlite3_unlock_notify          sqlite3_api->unlock_notify
 #define sqlite3_wal_autocheckpoint     sqlite3_api->wal_autocheckpoint
-#undef sqlite3_wal_checkpoint
-#define sqlite3_wal_checkpoint(a,b)    sqlite3_wal_checkpoint_v2(a,b,SQLITE_CHECKPOINT_PASSIVE,0,0)
+#define sqlite3_wal_checkpoint         sqlite3_api->wal_checkpoint
 #define sqlite3_wal_hook               sqlite3_api->wal_hook
 #define sqlite3_blob_reopen            sqlite3_api->blob_reopen
 #define sqlite3_vtab_config            sqlite3_api->vtab_config
@@ -732,6 +714,11 @@ typedef int (*sqlite3_loadext_entry)(
 /* Version 3.51.0 and later */
 #define sqlite3_set_errmsg             sqlite3_api->set_errmsg
 #define sqlite3_db_status64            sqlite3_api->db_status64
+/* Version 3.52.0 and later */
+#define sqlite3_str_truncate           sqlite3_api->str_truncate
+#define sqlite3_str_free               sqlite3_api->str_free
+#define sqlite3_carray_bind            sqlite3_api->carray_bind
+#define sqlite3_carray_bind_v2         sqlite3_api->carray_bind_v2
 #endif /* !defined(SQLITE_CORE) && !defined(SQLITE_OMIT_LOAD_EXTENSION) */
 
 #if !defined(SQLITE_CORE) && !defined(SQLITE_OMIT_LOAD_EXTENSION)
