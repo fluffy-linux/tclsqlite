@@ -71143,11 +71143,15 @@ SQLITE_PRIVATE int sqlite3WalReadFrame(
   i64 iOffset;
   sz = pWal->hdr.szPage;
   sz = (sz&0xfe00) + ((sz&0x0001)<<16);
+  if( nOut>sz ){
+    memset(pOut+sz, 0, nOut-sz);
+    nOut = sz;
+  }
   testcase( sz<=32768 );
   testcase( sz>=65536 );
   iOffset = walFrameOffset(iRead, sz) + WAL_FRAME_HDRSIZE;
   /* testcase( IS_BIG_INT(iOffset) ); // requires a 4GiB WAL */
-  return sqlite3OsRead(pWal->pWalFd, pOut, (nOut>sz ? sz : nOut), iOffset);
+  return sqlite3OsRead(pWal->pWalFd, pOut, nOut, iOffset);
 }
 
 /*
@@ -72851,6 +72855,7 @@ struct IntegrityCk {
   int nErr;         /* Number of messages written to zErrMsg so far */
   int rc;           /* SQLITE_OK, SQLITE_NOMEM, or SQLITE_INTERRUPT */
   u32 nStep;        /* Number of steps into the integrity_check process */
+  u8 nAbove;        /* Current btree recursion depth */
   const char *zPfx; /* Error message prefix */
   Pgno v0;          /* Value for first %u substitution in zPfx (root page) */
   Pgno v1;          /* Value for second %u substitution in zPfx (current pg) */
@@ -83392,11 +83397,20 @@ SQLITE_PRIVATE int sqlite3BtreeCreateTable(Btree *p, Pgno *piTable, int flags){
 /*
 ** Erase the given database page and all its children.  Return
 ** the page to the freelist.
+**
+** The freePageFlag parameter serves a double role:
+**
+**    *  Bit 0 (freePageFlag&1) means that the page should be freed
+**       after it is cleared.
+**
+**    *  Bits 1-31 (freePageFlag>>1) is the depth of recursion.  Use this
+**       to prevent a corrupt database file from recursing too deeply and
+**       overflowing the CPU stack.
 */
 static int clearDatabasePage(
   BtShared *pBt,           /* The BTree that contains the table */
   Pgno pgno,               /* Page number to clear */
-  int freePageFlag,        /* Deallocate page if true */
+  int freePageFlag,        /* bit 0: Deallocate page.  Bits 1-31: depth */
   i64 *pnChange            /* Add number of Cells freed to this counter */
 ){
   MemPage *pPage;
@@ -83408,6 +83422,9 @@ static int clearDatabasePage(
 
   assert( sqlite3_mutex_held(pBt->mutex) );
   if( pgno>btreePagecount(pBt) ){
+    return SQLITE_CORRUPT_PGNO(pgno);
+  }
+  if( (freePageFlag>>1) > BTCURSOR_MAX_DEPTH ){
     return SQLITE_CORRUPT_PGNO(pgno);
   }
   rc = getAndInitPage(pBt, pgno, &pPage, 0);
@@ -83422,14 +83439,16 @@ static int clearDatabasePage(
   for(i=0; i<pPage->nCell; i++){
     pCell = findCell(pPage, i);
     if( !pPage->leaf ){
-      rc = clearDatabasePage(pBt, get4byte(pCell), 1, pnChange);
+      rc = clearDatabasePage(pBt, get4byte(pCell),
+                             (freePageFlag+2)|1, pnChange);
       if( rc ) goto cleardatabasepage_out;
     }
     BTREE_CLEAR_CELL(rc, pPage, pCell, info);
     if( rc ) goto cleardatabasepage_out;
   }
   if( !pPage->leaf ){
-    rc = clearDatabasePage(pBt, get4byte(&pPage->aData[hdr+8]), 1, pnChange);
+    rc = clearDatabasePage(pBt, get4byte(&pPage->aData[hdr+8]),
+                           (freePageFlag+2)|1, pnChange);
     if( rc ) goto cleardatabasepage_out;
     if( pPage->intKey ) pnChange = 0;
   }
@@ -83437,7 +83456,7 @@ static int clearDatabasePage(
     testcase( !pPage->intKey );
     *pnChange += pPage->nCell;
   }
-  if( freePageFlag ){
+  if( (freePageFlag&1)!=0 ){
     freePage(pPage, &rc);
   }else if( (rc = sqlite3PagerWrite(pPage->pDbPage))==0 ){
     zeroPage(pPage, pPage->aData[hdr] | PTF_LEAF);
@@ -84072,17 +84091,22 @@ static int checkTreePage(
   /* Check that the page exists
   */
   checkProgress(pCheck);
-  if( pCheck->mxErr==0 ) goto end_of_check;
+  if( pCheck->mxErr==0 ) return 0;
   pBt = pCheck->pBt;
   usableSize = pBt->usableSize;
   if( iPage==0 ) return 0;
   if( checkRef(pCheck, iPage) ) return 0;
   pCheck->zPfx = "Tree %u page %u: ";
   pCheck->v1 = iPage;
+  pCheck->nAbove++;
   if( (rc = btreeGetPage(pBt, iPage, &pPage, 0))!=0 ){
     checkAppendMsg(pCheck,
        "unable to get the page. error code=%d", rc);
     if( rc==SQLITE_IOERR_NOMEM ) pCheck->rc = SQLITE_NOMEM;
+    goto end_of_check;
+  }
+  if( pCheck->nAbove > BTCURSOR_MAX_DEPTH ){
+    checkAppendMsg(pCheck,"btree depth exceeds %d",BTCURSOR_MAX_DEPTH);
     goto end_of_check;
   }
 
@@ -84299,6 +84323,7 @@ end_of_check:
   pCheck->zPfx = saved_zPfx;
   pCheck->v1 = saved_v1;
   pCheck->v2 = saved_v2;
+  pCheck->nAbove--;
   return depth+1;
 }
 #endif /* SQLITE_OMIT_INTEGRITY_CHECK */
@@ -84431,7 +84456,9 @@ SQLITE_PRIVATE int sqlite3BtreeIntegrityCheck(
       }
 #endif
       sCheck.v0 = aRoot[i];
+      assert( sCheck.nAbove==0 );
       checkTreePage(&sCheck, aRoot[i], &notUsed, LARGEST_INT64);
+      assert( sCheck.nAbove==0 );
     }
     sqlite3MemSetArrayInt64(aCnt, i, sCheck.nRow);
   }
@@ -158513,6 +158540,7 @@ SQLITE_PRIVATE void sqlite3FinishTrigger(
   DbFixer sFix;                           /* Fixer object */
   int iDb;                                /* Database containing the trigger */
   Token nameToken;                        /* Trigger name for error reporting */
+  u64 n;                                  /* Number of steps */
 
   pParse->pNewTrigger = 0;
   if( NEVER(pParse->nErr) || !pTrig ) goto triggerfinish_cleanup;
@@ -158520,9 +158548,14 @@ SQLITE_PRIVATE void sqlite3FinishTrigger(
   iDb = sqlite3SchemaToIndex(pParse->db, pTrig->pSchema);
   assert( iDb>=00 && iDb<db->nDb );
   pTrig->step_list = pStepList;
-  while( pStepList ){
+  for(n=0; pStepList; n++){
     pStepList->pTrig = pTrig;
     pStepList = pStepList->pNext;
+  }
+  if( n>65000 ){
+    /*  ^^^^^---- Backported value of the default SQLITE_LIMIT_TRIGGER_STEPS */
+    sqlite3ErrorMsg(pParse, "trigger \"%w\" contains too many steps", zName);
+    goto triggerfinish_cleanup;
   }
   sqlite3TokenInit(&nameToken, pTrig->zName);
   sqlite3FixInit(&sFix, pParse, iDb, "trigger", &nameToken);
@@ -164538,6 +164571,7 @@ static Expr *removeUnindexableInClauseTerms(
       ExprList *pRhs = 0;         /* New RHS after modifications */
       ExprList *pLhs = 0;         /* New LHS after mods */
       int i;                      /* Loop counter */
+      int nRhs = 0;               /* Number of RHS terms added so far */
 
       assert( ExprUseXSelect(pNew) );
       pOrigRhs = pSelect->pEList;
@@ -164551,6 +164585,9 @@ static Expr *removeUnindexableInClauseTerms(
           int iField;
           assert( (pLoop->aLTerm[i]->eOperator & (WO_OR|WO_AND))==0 );
           iField = pLoop->aLTerm[i]->u.x.iField - 1;
+          if( iField!=nRhs ){
+            ExprClearProperty(pNew, EP_Subrtn);
+          }
           if( NEVER(pOrigRhs->a[iField].pExpr==0) ){
             continue; /* Duplicate PK column */
           }
@@ -164562,6 +164599,7 @@ static Expr *removeUnindexableInClauseTerms(
             pLhs = sqlite3ExprListAppend(pParse,pLhs,pOrigLhs->a[iField].pExpr);
             pOrigLhs->a[iField].pExpr = 0;
           }
+          nRhs++;
         }
       }
       sqlite3ExprListDelete(db, pOrigRhs);
@@ -164662,7 +164700,8 @@ static SQLITE_NOINLINE void codeINTerm(
     sqlite3 *db = pParse->db;
     Expr *pXMod = removeUnindexableInClauseTerms(pParse, iEq, pLoop, pX);
     if( !db->mallocFailed ){
-      aiMap = (int*)sqlite3DbMallocZero(db, sizeof(int)*nEq);
+      int nCol = pX->x.pSelect->pEList->nExpr;
+      aiMap = (int*)sqlite3DbMallocZero(db, sizeof(int)*nCol);
       eType = sqlite3FindInIndex(pParse, pXMod, IN_INDEX_LOOP, 0, aiMap, &iTab);
     }
     sqlite3ExprDelete(db, pXMod);
@@ -166865,7 +166904,15 @@ SQLITE_PRIVATE SQLITE_NOINLINE void sqlite3WhereRightJoinLoop(
   pFrom->nAlloc = 1;
   memcpy(&pFrom->a[0], pTabItem, sizeof(SrcItem));
   pFrom->a[0].fg.jointype = 0;
-  assert( pParse->withinRJSubrtn < 100 );
+  if( pParse->withinRJSubrtn >= 100 ){
+    /* This limit --------------^^^
+    ** is based on an historical assert().  It is not compile-time or
+    ** run-time configurable.  It could perhaps be raised as high as 254,
+    ** but only an attack robot would ever do even 100 RIGHT JOINS within
+    ** a single query, so we'll just leave it as it is. */
+    sqlite3ErrorMsg(pParse, "too many RIGHT JOINs");
+    return;
+  }
   pParse->withinRJSubrtn++;
   pSubWInfo = sqlite3WhereBegin(pParse, pFrom, pSubWhere, 0, 0, 0,
                                 WHERE_RIGHT_JOIN, 0);
@@ -210751,6 +210798,7 @@ static int fts3BestSnippet(
   size_t nByte;                   /* Number of bytes of space to allocate */
   int iBestScore = -1;            /* Best snippet score found so far */
   int i;                          /* Loop counter */
+  Fts3Expr *pExpr = pCsr->pExpr;
 
   memset(&sIter, 0, sizeof(sIter));
 
@@ -210779,9 +210827,12 @@ static int fts3BestSnippet(
   sIter.nSnippet = nSnippet;
   sIter.nPhrase = nList;
   sIter.iCurrent = -1;
-  rc = sqlite3Fts3ExprIterate(
-      pCsr->pExpr, fts3SnippetFindPositions, (void*)&sIter
-  );
+  rc = sqlite3Fts3ExprIterate(pExpr, fts3SnippetFindPositions, (void*)&sIter);
+  if( rc==SQLITE_OK ){
+    /* Iterate through the expression twice, in case pointers garnered during
+    ** the first iteration are invalidated by a call to fts5EvalRestart(). */
+    rc = sqlite3Fts3ExprIterate(pExpr, fts3SnippetFindPositions, (void*)&sIter);
+  }
   if( rc==SQLITE_OK ){
 
     /* Set the *pmSeen output variable. */
@@ -239407,7 +239458,7 @@ static int sessionRetryConstraints(
     if( rc==SQLITE_OK ){
       sqlite3_step(pInsert);
       rc = sqlite3_finalize(pInsert);
-      if( rc==SQLITE_CONSTRAINT ){
+      if( (rc&0xff)==SQLITE_CONSTRAINT ){
         rc = sqlite3_exec(db, "ROLLBACK TO update_op", 0, 0, 0);
         sqlite3_free(pApply->constraints.aBuf);
         pApply->constraints = cons;
@@ -239469,10 +239520,10 @@ static int sessionChangesetApply(
   int schemaMismatch = 0;
   int rc = SQLITE_OK;             /* Return code */
   const char *zTab = 0;           /* Name of current table */
-  int nTab = 0;                   /* Result of sqlite3Strlen30(zTab) */
   SessionApplyCtx sApply;         /* changeset_apply() context object */
   int bPatchset;
   u64 savedFlag = db->flags & SQLITE_FkNoAction;
+  int bNew = 0;                   /* True for first entry of new table */
 
   assert( xConflict!=0 );
 
@@ -239494,15 +239545,16 @@ static int sessionChangesetApply(
   if( rc==SQLITE_OK ){
     rc = sqlite3_exec(db, "PRAGMA defer_foreign_keys = 1", 0, 0, 0);
   }
-  while( rc==SQLITE_OK && SQLITE_ROW==sqlite3changeset_next(pIter) ){
+  while( rc==SQLITE_OK && SQLITE_ROW==sessionChangesetNext(pIter, 0, 0,&bNew) ){
     int nCol;
     int op;
     const char *zNew;
 
     sqlite3changeset_op(pIter, &zNew, &nCol, &op, 0);
 
-    if( zTab==0 || sqlite3_strnicmp(zNew, zTab, nTab+1) ){
+    if( bNew ){
       u8 *abPK;
+      bNew = 0;
 
       rc = sessionRetryConstraints(
           db, pIter->bPatchset, zTab, &sApply, xConflict, pCtx
@@ -239537,7 +239589,6 @@ static int sessionChangesetApply(
           rc = SQLITE_NOMEM;
           break;
         }
-        nTab = (int)strlen(zTab);
         sApply.azCol = (const char **)zTab;
       }else{
         int nMinCol = 0;
@@ -239590,7 +239641,6 @@ static int sessionChangesetApply(
             sApply.bStat1 = 0;
           }
         }
-        nTab = sqlite3Strlen30(zTab);
       }
     }
 
@@ -251263,7 +251313,12 @@ static void sqlite3Fts5HashScanEntry(
 #define FTS5_DATA_ID_B     16     /* Max seg id number 65535 */
 #define FTS5_DATA_DLI_B     1     /* Doclist-index flag (1 bit) */
 #define FTS5_DATA_HEIGHT_B  5     /* Max dlidx tree height of 32 */
-#define FTS5_DATA_PAGE_B   31     /* Max page number of 2147483648 */
+#define FTS5_DATA_PAGE_B   31     /* 31-bit page numbers */
+
+/* Maximum page number within a segment. Declare any structure read from
+** the database with a page number greater than this corrupt. It is not
+** actually possible to create a database this large.  */
+#define FTS5_MAX_PGNO 0x7FFFFF00
 
 #define fts5_dri(segid, dlidx, height, pgno) (                                 \
  ((i64)(segid)  << (FTS5_DATA_PAGE_B+FTS5_DATA_HEIGHT_B+FTS5_DATA_DLI_B)) +    \
@@ -252176,7 +252231,7 @@ static int fts5StructureDecode(
             i += fts5GetVarint(&pData[i], &pSeg->nEntry);
             nOriginCntr = MAX(nOriginCntr, pSeg->iOrigin2);
           }
-          if( pSeg->pgnoLast<pSeg->pgnoFirst ){
+          if( pSeg->pgnoLast<pSeg->pgnoFirst || pSeg->pgnoLast>FTS5_MAX_PGNO ){
             rc = FTS5_CORRUPT;
             break;
           }
@@ -252771,6 +252826,9 @@ static Fts5DlidxIter *fts5DlidxIterInit(
         bDone = 1;
       }
       pIter->nLvl = i+1;
+      if( pIter->nLvl > (1<<FTS5_DATA_HEIGHT_B) ){
+        p->rc = FTS5_CORRUPT;
+      }
     }
   }
 
@@ -256492,34 +256550,38 @@ static void fts5DoSecureDelete(
   if( p->rc==SQLITE_OK ){
     const int nMove = nPg - iNextOff;     /* Number of bytes to move */
     int nShift = iNextOff - iOff;         /* Distance to move them */
-
+    int nNewPg = 0;
     int iPrevKeyOut = 0;
-    int iKeyIn = 0;
+    i64 iKeyIn = 0;
 
     if( nMove>0 ){
       memmove(&aPg[iOff], &aPg[iNextOff], nMove);
     }
     iPgIdx -= nShift;
-    nPg = iPgIdx;
+    nNewPg = iPgIdx;
     fts5PutU16(&aPg[2], iPgIdx);
 
     for(iIdx=0; iIdx<nIdx; /* no-op */){
       u32 iVal = 0;
       iIdx += fts5GetVarint32(&aIdx[iIdx], iVal);
       iKeyIn += iVal;
+      if( iKeyIn>nPg ){
+        FTS5_CORRUPT_IDX(p);
+        break;
+      }
       if( iKeyIn!=iDelKeyOff ){
         int iKeyOut = (iKeyIn - (iKeyIn>iOff ? nShift : 0));
-        nPg += sqlite3Fts5PutVarint(&aPg[nPg], iKeyOut - iPrevKeyOut);
+        nNewPg += sqlite3Fts5PutVarint(&aPg[nNewPg], iKeyOut - iPrevKeyOut);
         iPrevKeyOut = iKeyOut;
       }
     }
 
-    if( iPgIdx==nPg && nIdx>0 && pSeg->iLeafPgno!=1 ){
+    if( p->rc==SQLITE_OK && iPgIdx==nNewPg && nIdx>0 && pSeg->iLeafPgno!=1 ){
       fts5SecureDeleteIdxEntry(p, iSegid, pSeg->iLeafPgno);
     }
 
-    assert_nc( nPg>4 || fts5GetU16(aPg)==0 );
-    fts5DataWrite(p, FTS5_SEGMENT_ROWID(iSegid,pSeg->iLeafPgno), aPg, nPg);
+    assert_nc( nNewPg>4 || fts5GetU16(aPg)==0 );
+    fts5DataWrite(p, FTS5_SEGMENT_ROWID(iSegid,pSeg->iLeafPgno), aPg, nNewPg);
   }
   sqlite3_free(aIdx);
 }
@@ -257082,7 +257144,7 @@ static void fts5MergeRowidLists(
   (void)nBuf;
   memset(&out, 0, sizeof(out));
   assert( nBuf==1 );
-  sqlite3Fts5BufferSize(&p->rc, &out, p1->n + p2->n);
+  sqlite3Fts5BufferSize(&p->rc, &out, p1->n + p2->n + 9);
   if( p->rc ) return;
 
   fts5NextRowid(p1, &i1, &iRowid1);
@@ -257090,12 +257152,12 @@ static void fts5MergeRowidLists(
   while( i1>=0 || i2>=0 ){
     if( i1>=0 && (i2<0 || iRowid1<iRowid2) ){
       assert( iOut==0 || iRowid1>iOut );
-      fts5BufferSafeAppendVarint(&out, iRowid1 - iOut);
+      fts5BufferSafeAppendVarint(&out, (u64)iRowid1 - (u64)iOut);
       iOut = iRowid1;
       fts5NextRowid(p1, &i1, &iRowid1);
     }else{
       assert( iOut==0 || iRowid2>iOut );
-      fts5BufferSafeAppendVarint(&out, iRowid2 - iOut);
+      fts5BufferSafeAppendVarint(&out, (u64)iRowid2 - (u64)iOut);
       iOut = iRowid2;
       if( i1>=0 && iRowid1==iRowid2 ){
         fts5NextRowid(p1, &i1, &iRowid1);
