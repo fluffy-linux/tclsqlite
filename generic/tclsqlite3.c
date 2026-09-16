@@ -151,7 +151,11 @@ typedef struct SqliteDb SqliteDb;
 ** the tclsqlite3.c amalgamation.
 */
 #if defined(SQLITE_ENABLE_QRF_IN_TCL)
+#ifdef USE_SYSTEM_SQLITE
 #include "qrf.h"
+#else
+#include "../compat/sqlite3/qrf.c"
+#endif
 #endif
 
 /*
@@ -4568,6 +4572,9 @@ DLLEXPORT int Sqlite3_Init(Tcl_Interp *interp){
 #endif
 #ifdef PURIFY
 			    ".purify"
+#endif
+#ifdef SQLITE_ENABLE_QRF_IN_TCL
+			    ".qrf"
 #endif
 #ifdef STATIC_BUILD
 			    ".static"

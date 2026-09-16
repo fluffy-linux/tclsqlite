@@ -148,7 +148,7 @@ SHARED_BUILD	= @SHARED_BUILD@
 INCLUDES	= @PKG_INCLUDES@ @TCL_INCLUDES@ -I. -I$(srcdir)/..
 #INCLUDES	= @PKG_INCLUDES@ @TCL_INCLUDES@ @TK_INCLUDES@ @TK_XINCLUDES@
 
-PKG_CFLAGS	= @PKG_CFLAGS@ -DSQLITE_EXTERN=
+PKG_CFLAGS	= @PKG_CFLAGS@ -DSQLITE_EXTERN= -DSQLITE_ENABLE_QRF_IN_TCL
 
 # TCL_DEFS is not strictly need here, but if you remove it, then you
 # must make sure that configure.ac checks for the necessary components
