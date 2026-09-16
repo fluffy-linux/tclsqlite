@@ -3117,11 +3117,12 @@ static int SQLITE_TCLAPI DbObjCmd(
     zCommit = "COMMIT";
     while( Tcl_GetsObj(in, str)>=0 ) {
       char *z;
+      Tcl_Size byteLen;
       lineno++;
       if (zEnc && *zEnc) {
           zLine = Tcl_GetString(str);
       }else {
-          zLine = (char *)Tcl_GetByteArrayFromObj(str, NULL);
+          zLine = (char *)Tcl_GetByteArrayFromObj(str, &byteLen);
       }
       azCol[0] = zLine;
       for(i=0, z=zLine; *z; z++){
@@ -3176,6 +3177,9 @@ static int SQLITE_TCLAPI DbObjCmd(
     if( zCommit[0] == 'C' ){
       /* success, set result as number of lines processed */
       pResult = Tcl_GetObjResult(interp);
+      if( Tcl_IsShared(pResult) ){
+        pResult = Tcl_DuplicateObj(pResult);
+      }
       Tcl_SetIntObj(pResult, lineno);
       rc = TCL_OK;
     }else{
