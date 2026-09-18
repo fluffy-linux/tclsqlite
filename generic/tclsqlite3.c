@@ -118,8 +118,8 @@
 #ifdef USE_TCL_STUBS
 # undef Tcl_BackgroundException
 # define Tcl_BackgroundException(interp, result) (DbUseNre()? \
-    ((void (*)(Tcl_Interp *, int))((&(tclStubsPtr->tcl_PkgProvideEx))[609]))((interp), (result)): \
-    ((void (*)(Tcl_Interp *))((&(tclStubsPtr->tcl_PkgProvideEx))[76]))(interp))
+    ((void (*)(Tcl_Interp *, int))(void *)((&(tclStubsPtr->tcl_PkgProvideEx))[609]))((interp), (result)): \
+    ((void (*)(Tcl_Interp *))(void *)((&(tclStubsPtr->tcl_PkgProvideEx))[76]))(interp))
 #elif (TCL_MAJOR_VERSION==8) && defined(TCL_MINOR_VERSION) && (TCL_MINOR_VERSION<6)
 # define Tcl_BackgroundException(interp, result) Tcl_BackgroundError(interp)
 #endif /* USE_TCL_STUBS */
@@ -373,7 +373,7 @@ static int SQLITE_TCLAPI incrblobInput(
   }
 
   p->iSeek += nRead;
-  return nRead;
+  return (int)nRead;
 }
 
 /*
@@ -406,7 +406,7 @@ static int SQLITE_TCLAPI incrblobOutput(
   }
 
   p->iSeek += nWrite;
-  return nWrite;
+  return (int)nWrite;
 }
 
 /* The datatype of Tcl_DriverWideSeekProc changes between tcl8.6 and tcl9.0 */
@@ -426,6 +426,7 @@ static WideSeekProcType SQLITE_TCLAPI incrblobWideSeek(
   int *errorCodePtr
 ){
   IncrblobChannel *p = (IncrblobChannel *)instanceData;
+  (void)errorCodePtr;
 
   switch( seekMode ){
     case SEEK_SET:
@@ -449,7 +450,7 @@ static int SQLITE_TCLAPI incrblobSeek(
   int seekMode,
   int *errorCodePtr
 ){
-  return incrblobWideSeek(instanceData,offset,seekMode,errorCodePtr);
+  return (int)incrblobWideSeek(instanceData,offset,seekMode,errorCodePtr);
 }
 
 
@@ -972,6 +973,7 @@ static void DbPreUpdateHandler(
   SqliteDb *pDb = (SqliteDb *)p;
   Tcl_Obj *pCmd;
   static const char *azStr[] = {"DELETE", "INSERT", "UPDATE"};
+  (void)db;
 
   assert( (SQLITE_DELETE-1)/9 == 0 );
   assert( (SQLITE_INSERT-1)/9 == 1 );
@@ -1182,7 +1184,7 @@ static void tclSqlFunc(sqlite3_context *context, int argc, sqlite3_value**argv){
     switch( eType ){
       case SQLITE_BLOB: {
         data = Tcl_GetByteArrayFromObj(pVar, &n);
-        sqlite3_result_blob(context, data, n, SQLITE_TRANSIENT);
+        sqlite3_result_blob64(context, data, n, SQLITE_TRANSIENT);
         break;
       }
       case SQLITE_INTEGER: {
@@ -1574,7 +1576,7 @@ static int dbPrepareAndBind(
           ** it has no string representation or the host
           ** parameter name begins with "@". */
           data = Tcl_GetByteArrayFromObj(pVar, &n);
-          sqlite3_bind_blob(pStmt, i, data, n, SQLITE_STATIC);
+          sqlite3_bind_blob64(pStmt, i, data, n, SQLITE_STATIC);
           Tcl_IncrRefCount(pVar);
           pPreStmt->apParm[iParm++] = pVar;
         }else if( c=='b' && pVar->bytes==0 
@@ -2294,7 +2296,7 @@ static int dbQrf(SqliteDb *pDb, int objc, Tcl_Obj *const*objv){
         assert( QRF_No==1 );
         assert( QRF_Yes==2 );
         assert( QRF_Always==3 );
-        qrf.bTitles = txt+QRF_No;
+        qrf.bTitles = (unsigned char)(txt+QRF_No);
         qrf.eTitle = QRF_TEXT_Auto;
       }else{
         qrf.bTitles = QRF_Yes;
@@ -2372,13 +2374,13 @@ static int dbQrf(SqliteDb *pDb, int objc, Tcl_Obj *const*objv){
         v = QRF_MAX_WIDTH;
       }
       if( zArg[1]=='w' ){
-        qrf.nWrap = v;
+        qrf.nWrap = (short)v;
       }else if( zArg[1]=='s' ){
-        qrf.nScreenWidth = v;
+        qrf.nScreenWidth = (short)v;
       }else if( zArg[1]=='t' ){
-        qrf.nTitleLimit = v;
+        qrf.nTitleLimit = (short)v;
       }else{
-        qrf.nLineLimit = v;
+        qrf.nLineLimit = (short)v;
       }
       i++;
     }else if( strcmp(zArg,"-charlimit")==0 ){
@@ -2408,7 +2410,7 @@ static int dbQrf(SqliteDb *pDb, int objc, Tcl_Obj *const*objv){
         goto format_failed;
       }
       memset(qrf.aAlign, 0, (n+1)*sizeof(qrf.aAlign[0]));
-      qrf.nAlign = n;
+      qrf.nAlign = (int)n;
       for(jj=0; jj<n; jj++){
         int x;
         Tcl_Obj *pTerm;
@@ -2433,7 +2435,7 @@ static int dbQrf(SqliteDb *pDb, int objc, Tcl_Obj *const*objv){
         goto format_failed;
       }
       memset(qrf.aWidth, 0, (n+1)*sizeof(qrf.aWidth[0]));
-      qrf.nWidth = n;
+      qrf.nWidth = (int)n;
       for(jj=0; jj<n; jj++){
         Tcl_Obj *pTerm;
         int v;
@@ -2484,7 +2486,7 @@ static int dbQrf(SqliteDb *pDb, int objc, Tcl_Obj *const*objv){
       i++;
     }else if( strcmp(zArg,"-version")==0 ){
       /* Undocumented. Testing use only */
-      qrf.iVersion = atoi(Tcl_GetString(objv[i+1]));
+      qrf.iVersion = (unsigned char)atoi(Tcl_GetString(objv[i+1]));
       i++;
     }else{
       Tcl_AppendResult(pDb->interp, "unknown option: ", zArg, (char*)0);
@@ -2991,7 +2993,7 @@ static int SQLITE_TCLAPI DbObjCmd(
         { "writable_schema",    SQLITE_DBCONFIG_WRITABLE_SCHEMA       },
     };
     Tcl_Obj *pResult;
-    int ii;
+    size_t ii;
     if( objc>4 ){
       Tcl_WrongNumArgs(interp, 2, objv, "?OPTION? ?BOOLEAN?");
       return TCL_ERROR;
@@ -4664,10 +4666,10 @@ DLLEXPORT int Sqlite3_SafeUnload(Tcl_Interp *interp, int flags){(void)interp;(vo
 */
 DLLEXPORT int Sqlite_Init(Tcl_Interp *interp){ return Sqlite3_Init(interp);}
 DLLEXPORT int Tclsqlite_Init(Tcl_Interp *interp){ return Sqlite3_Init(interp); }
-DLLEXPORT int Sqlite_Unload(Tcl_Interp *interp, int flags){ return TCL_OK; }
-DLLEXPORT int Tclsqlite_Unload(Tcl_Interp *interp, int flags){ return TCL_OK; }
-DLLEXPORT int Sqlite_SafeInit(Tcl_Interp *interp){ return TCL_ERROR; }
-DLLEXPORT int Sqlite_SafeUnload(Tcl_Interp *interp, int flags){return TCL_ERROR;}
+DLLEXPORT int Sqlite_Unload(Tcl_Interp *interp, int flags){ (void)interp; (void)(flags); return TCL_OK; }
+DLLEXPORT int Tclsqlite_Unload(Tcl_Interp *interp, int flags){ (void)interp; (void)(flags); return TCL_OK; }
+DLLEXPORT int Sqlite_SafeInit(Tcl_Interp *interp){ (void)interp; return TCL_ERROR; }
+DLLEXPORT int Sqlite_SafeUnload(Tcl_Interp *interp, int flags){(void)interp; (void)(flags); return TCL_ERROR;}
 
 /* Also variants with a lowercase "s".  I'm told that these are
 ** deprecated in Tcl9, but they continue to be included for backwards
