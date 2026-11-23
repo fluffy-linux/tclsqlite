@@ -1,4 +1,4 @@
-#! /bin/sh
+#!/sw/bash/bin/bash
 # restart with tclsh \
 exec tclsh "$0" ${1+"$@"}
 package require sqlite3
